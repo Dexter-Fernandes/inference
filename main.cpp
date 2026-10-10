@@ -30,6 +30,15 @@ struct LetterboxInfo
     int pad_x, pad_y;
 };
 
+struct FrameData
+{
+    cv::Mat frame; // original, drawn on at the end
+    cv::Mat blob;  // NCHW input to the net
+    LetterboxInfo lb;
+    cv::Mat out; // raw net output
+    std::vector<Detection> dets;
+};
+
 void letterbox(const cv::Mat &src, cv::Mat &resized, cv::Mat &out, int size, LetterboxInfo &lb)
 {
     lb.scale = std::min(size / static_cast<float>(src.cols),
@@ -125,6 +134,15 @@ void draw(cv::Mat &frame, const std::vector<Detection> &dets,
     }
 }
 
+bool read_frame(cv::VideoCapture &cap, bool flip, FrameData &framedata)
+{
+    if (!cap.read(framedata.frame))
+        return false;
+    if (flip)
+        cv::flip(framedata.frame, framedata.frame, 1);
+    return true;
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 2 || argc > 3)
@@ -168,6 +186,9 @@ int main(int argc, char **argv)
     cv::Mat frame, input, resized, blob;
     LetterboxInfo lb{};
     Config config;
+    FrameData framedata{
+
+    };
     std::vector<std::string> names; // empty is fine: draw() falls back to class ids
     {
         std::ifstream f("assets/coco.names");
@@ -178,35 +199,19 @@ int main(int argc, char **argv)
     }
 
     double fps_ema = 0.0;
-    while (cap.read(frame))
+    while (read_frame(cap, is_camera, framedata))
     {
-        const auto t0 = std::chrono::steady_clock::now();
 
-        if (is_camera)
-            cv::flip(frame, frame, 1);
+        // letterbox(frame, resized, input, config.input_size, lb);
+        // cv::dnn::blobFromImage(input, blob, 1.0 / 255.0, {config.input_size, config.input_size}, cv::Scalar(), /*swapRB=*/true, /*crop=*/false);
 
-        letterbox(frame, resized, input, config.input_size, lb);
-        cv::dnn::blobFromImage(input, blob, 1.0 / 255.0, {config.input_size, config.input_size}, cv::Scalar(), /*swapRB=*/true, /*crop=*/false);
+        // net.setInput(blob);
+        // const cv::Mat out = net.forward();
 
-        net.setInput(blob);
-        const cv::Mat out = net.forward();
+        // const auto dets = postprocess(out, lb, frame.size(), config);
+        // draw(frame, dets, names);
 
-        const auto dets = postprocess(out, lb, frame.size(), config);
-        draw(frame, dets, names);
-
-        const auto dt = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-        // fps_ema = fps_ema == 0.0 ? 1.0 / dt : 0.9 * fps_ema + 0.1 * (1.0 / dt);
-        if (fps_ema == 0.0)
-            fps_ema = 1.0 / dt;
-        else
-            (fps_ema) = 0.9 * fps_ema + 0.1 * (1.0 / dt);
-
-        cv::putText(frame, cv::format("FPS: %.1f  Det: %zu", fps_ema, dets.size()),
-                    {10, 25}, cv::FONT_HERSHEY_SIMPLEX, 0.7, {0, 0, 0}, 4, cv::LINE_AA);
-        cv::putText(frame, cv::format("FPS: %.1f  Det: %zu", fps_ema, dets.size()),
-                    {10, 25}, cv::FONT_HERSHEY_SIMPLEX, 0.7, {0, 255, 0}, 1.5, cv::LINE_AA);
-
-        cv::imshow("Playback", frame);
+        cv::imshow("Playback", framedata.frame);
 
         const int key = cv::waitKey(1) & 0xFF;
         if (key == 'q' || key == 27)
