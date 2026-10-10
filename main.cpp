@@ -7,7 +7,6 @@
 #include <cmath>
 #include <set>
 #include <vector>
-#include <chrono>
 
 struct Config
 {
@@ -153,6 +152,17 @@ void draw(cv::Mat &frame, const std::vector<Detection> &dets,
     }
 }
 
+void render(FrameData &framedata, const std::vector<std::string> &names, double fps)
+{
+    draw(framedata.frame, framedata.dets, names);
+
+    const std::string hud = cv::format("FPS: %.1f  Det: %zu", fps, framedata.dets.size());
+    cv::putText(framedata.frame, hud, {10, 25}, cv::FONT_HERSHEY_SIMPLEX, 0.7, {0, 0, 0}, 4, cv::LINE_AA);
+    cv::putText(framedata.frame, hud, {10, 25}, cv::FONT_HERSHEY_SIMPLEX, 0.7, {0, 255, 0}, 1, cv::LINE_AA);
+
+    cv::imshow("Playback", framedata.frame);
+}
+
 bool read_frame(cv::VideoCapture &cap, bool flip, FrameData &framedata)
 {
     if (!cap.read(framedata.frame))
@@ -202,8 +212,6 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    cv::Mat frame, input, resized, blob;
-    LetterboxInfo lb{};
     Config config;
     FrameData fd{};
 
@@ -216,20 +224,25 @@ int main(int argc, char **argv)
             names.push_back(line);
     }
 
+    cv::TickMeter frame_tm;
     double fps_ema = 0.0;
     while (read_frame(cap, is_camera, fd))
     {
+        frame_tm.reset();
+        frame_tm.start();
 
         preprocess(fd, config.input_size);
-
         infer(net, fd);
-
         postprocess_stage(fd, config);
 
-        // const auto dets = postprocess(out, lb, frame.size(), config);
-        // draw(frame, dets, names);
+        frame_tm.stop();
+        const double fps = 1.0 / frame_tm.getTimeSec();
+        if (fps_ema == 0.0)
+            fps_ema = fps;
+        else
+            fps_ema = 0.9 * fps_ema + 0.1 * fps;
 
-        cv::imshow("Playback", fd.frame);
+        render(fd, names, fps_ema);
 
         const int key = cv::waitKey(1) & 0xFF;
         if (key == 'q' || key == 27)
