@@ -3,3 +3,4 @@ t.cpp
 build/
 assets/*
 .vscode/
+heaptrack.*.zst
