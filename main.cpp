@@ -63,6 +63,12 @@ void preprocess(FrameData &framedata, int size)
     cv::dnn::blobFromImage(letterboxed, framedata.blob, 1.0 / 255.0, {size, size}, cv::Scalar(), /*swapRB=*/true, /*crop=*/false);
 }
 
+void infer(cv::dnn::Net &net, FrameData &framedata)
+{
+    net.setInput(framedata.blob);
+    framedata.out = net.forward().clone();
+}
+
 std::vector<Detection> postprocess(const cv::Mat &out, const LetterboxInfo &lb, const cv::Size &orig, const Config &cfg)
 {
     // YOLOV5 output: [1, num_boxes, 5 + num_classes]
@@ -211,11 +217,7 @@ int main(int argc, char **argv)
 
         preprocess(fd, config.input_size);
 
-        // letterbox(frame, resized, input, config.input_size, lb);
-        // cv::dnn::blobFromImage(input, blob, 1.0 / 255.0, {config.input_size, config.input_size}, cv::Scalar(), /*swapRB=*/true, /*crop=*/false);
-
-        // net.setInput(blob);
-        // const cv::Mat out = net.forward();
+        infer(net, fd);
 
         // const auto dets = postprocess(out, lb, frame.size(), config);
         // draw(frame, dets, names);
