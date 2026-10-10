@@ -9,6 +9,8 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE RelWithDebInfo)
 endif()
 
+set(CUDA_TOOLKIT_ROOT_DIR "/usr/local/cuda-12.9")
+list(PREPEND CMAKE_PREFIX_PATH "$ENV{HOME}/.local/opencv-cuda")
 find_package(OpenCV REQUIRED)
 
 add_executable(inference main.cpp)

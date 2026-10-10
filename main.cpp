@@ -163,8 +163,8 @@ int main(int argc, char **argv)
                   << e.what() << "\n";
         return 1;
     }
-    net.setPreferableBackend(cv::dnn::DNN_BACKEND_OPENCV);
-    net.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
+    net.setPreferableBackend(cv::dnn::DNN_BACKEND_CUDA);
+    net.setPreferableTarget(cv::dnn::DNN_TARGET_CUDA);
 
     cv::VideoCapture cap;
     // is_camera if source only contains numbers
@@ -199,6 +199,7 @@ int main(int argc, char **argv)
             names.push_back(line);
     }
 
+    const auto out_names = net.getUnconnectedOutLayersNames();
     while (cap.read(frame))
     {
         if (is_camera)
@@ -208,7 +209,7 @@ int main(int argc, char **argv)
         cv::dnn::blobFromImage(input, blob, 1.0 / 255.0, {config.input_size, config.input_size}, cv::Scalar(), /*swapRB=*/true, /*crop=*/false);
 
         net.setInput(blob);
-        net.forward(outputs, net.getUnconnectedOutLayersNames());
+        net.forward(outputs, out_names);
 
         const auto dets = postprocess(outputs[0], lb, frame.size(), config);
         draw(frame, dets, names);
