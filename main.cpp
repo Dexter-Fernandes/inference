@@ -7,6 +7,7 @@
 #include <cmath>
 #include <set>
 #include <vector>
+#include <chrono>
 
 struct Config
 {
@@ -176,8 +177,11 @@ int main(int argc, char **argv)
             names.push_back(line);
     }
 
+    double fps_ema = 0.0;
     while (cap.read(frame))
     {
+        const auto t0 = std::chrono::steady_clock::now();
+
         if (is_camera)
             cv::flip(frame, frame, 1);
 
@@ -189,6 +193,18 @@ int main(int argc, char **argv)
 
         const auto dets = postprocess(out, lb, frame.size(), config);
         draw(frame, dets, names);
+
+        const auto dt = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        // fps_ema = fps_ema == 0.0 ? 1.0 / dt : 0.9 * fps_ema + 0.1 * (1.0 / dt);
+        if (fps_ema == 0.0)
+            fps_ema = 1.0 / dt;
+        else
+            (fps_ema) = 0.9 * fps_ema + 0.1 * (1.0 / dt);
+
+        cv::putText(frame, cv::format("FPS: %.1f  Det: %zu", fps_ema, dets.size()),
+                    {10, 25}, cv::FONT_HERSHEY_SIMPLEX, 0.7, {0, 0, 0}, 4, cv::LINE_AA);
+        cv::putText(frame, cv::format("FPS: %.1f  Det: %zu", fps_ema, dets.size()),
+                    {10, 25}, cv::FONT_HERSHEY_SIMPLEX, 0.7, {0, 255, 0}, 1.5, cv::LINE_AA);
 
         cv::imshow("Playback", frame);
 
