@@ -4,3 +4,4 @@ build/
 assets/*
 .vscode/
 heaptrack.*.zst
+perf.*
