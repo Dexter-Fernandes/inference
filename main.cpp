@@ -10,7 +10,7 @@
 
 struct Config
 {
-    int input_size = 640;
+    int input_size = 320;
     float conf_thr = 0.25f;
     float nms_thr = 0.5f;
     std::set<int> keep_classes; // empty = keep all
@@ -36,6 +36,11 @@ struct FrameData
     LetterboxInfo lb;
     cv::Mat out; // raw net output
     std::vector<Detection> dets;
+};
+
+struct StageTimers
+{
+    cv::TickMeter read, pre, infer, post, render;
 };
 
 void letterbox(const cv::Mat &src, cv::Mat &resized, cv::Mat &out, int size, LetterboxInfo &lb)
@@ -225,15 +230,36 @@ int main(int argc, char **argv)
     }
 
     cv::TickMeter frame_tm;
+    StageTimers t{};
     double fps_ema = 0.0;
-    while (read_frame(cap, is_camera, fd))
+    for (int n = 1;; n++)
     {
+        if (n == 10)
+            for (auto *tm : {&t.read, &t.pre, &t.infer, &t.post, &t.render})
+                tm->reset();
+
+        t.read.start();
+        const bool ret = read_frame(cap, is_camera, fd);
+        t.read.stop();
+        if (!ret)
+        {
+            break;
+        }
+
         frame_tm.reset();
         frame_tm.start();
 
+        t.pre.start();
         preprocess(fd, config.input_size);
+        t.pre.stop();
+
+        t.infer.start();
         infer(net, fd);
+        t.infer.stop();
+
+        t.post.start();
         postprocess_stage(fd, config);
+        t.post.stop();
 
         frame_tm.stop();
         const double fps = 1.0 / frame_tm.getTimeSec();
@@ -242,7 +268,15 @@ int main(int argc, char **argv)
         else
             fps_ema = 0.9 * fps_ema + 0.1 * fps;
 
+        t.render.start();
         render(fd, names, fps_ema);
+        t.render.stop();
+
+        if (n % 100 == 0)
+        {
+            std::cerr << cv::format("frame %d: read %.1f | pre %.1f | infer %.1f | post %.1f | render %.1f ms\n",
+                                    n, t.read.getAvgTimeMilli(), t.pre.getAvgTimeMilli(), t.infer.getAvgTimeMilli(), t.post.getAvgTimeMilli(), t.render.getAvgTimeMilli());
+        }
 
         const int key = cv::waitKey(1) & 0xFF;
         if (key == 'q' || key == 27)
