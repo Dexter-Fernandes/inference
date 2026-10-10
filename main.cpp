@@ -126,6 +126,11 @@ std::vector<Detection> postprocess(const cv::Mat &out, const LetterboxInfo &lb, 
     return dets;
 }
 
+void postprocess_stage(FrameData &framedata, const Config &config)
+{
+    framedata.dets = postprocess(framedata.out, framedata.lb, framedata.frame.size(), config);
+}
+
 void draw(cv::Mat &frame, const std::vector<Detection> &dets,
           const std::vector<std::string> &names)
 {
@@ -218,6 +223,8 @@ int main(int argc, char **argv)
         preprocess(fd, config.input_size);
 
         infer(net, fd);
+
+        postprocess_stage(fd, config);
 
         // const auto dets = postprocess(out, lb, frame.size(), config);
         // draw(frame, dets, names);
