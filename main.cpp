@@ -10,7 +10,7 @@
 
 struct Config
 {
-    int input_size = 320;
+    int input_size = 640;
     float conf_thr = 0.25f;
     float nms_thr = 0.5f;
     std::set<int> keep_classes; // empty = keep all
