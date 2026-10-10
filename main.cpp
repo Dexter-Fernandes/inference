@@ -50,20 +50,24 @@ void letterbox(const cv::Mat &src, cv::Mat &resized, cv::Mat &out, int size, Let
     lb.pad_x = (size - nw) / 2;
     lb.pad_y = (size - nh) / 2;
 
-    // cv::Mat resized;
     cv::resize(src, resized, {nw, nh}, 0, 0, cv::INTER_LINEAR);
 
-    // cv::Mat out(size, size, src.type(), cv::Scalar::all(114));
     out.create(size, size, src.type()); // no-op after the first frame if size and type match
     out.setTo(cv::Scalar::all(114));    // memset, no allocation
     resized.copyTo(out(cv::Rect(lb.pad_x, lb.pad_y, nw, nh)));
-
-    // return out;
 }
 
 int main(int argc, char **argv)
 {
-    const std::string source = argc > 1 ? argv[1] : "0";
+    if (argc > 3)
+    {
+        std::cout << "Usage: " << argv[0]
+                  << " <video path|camera_index> <model.onnx>\n";
+        return 1;
+    }
+
+    const std::string model_path = argv[1]; 
+    const std::string source = argc > 2 ? argv[2] : "0";
 
     cv::VideoCapture cap;
     // is_camera if source only contains numbers
@@ -105,6 +109,4 @@ int main(int argc, char **argv)
         if (key == 'q' || key == 27)
             break;
     }
-
-    // return 0;
 }
