@@ -55,6 +55,14 @@ void letterbox(const cv::Mat &src, cv::Mat &resized, cv::Mat &out, int size, Let
     resized.copyTo(out(cv::Rect(lb.pad_x, lb.pad_y, nw, nh)));
 }
 
+void preprocess(FrameData &framedata, int size)
+{
+    cv::Mat resized, letterboxed;
+
+    letterbox(framedata.frame, resized, letterboxed, size, framedata.lb);
+    cv::dnn::blobFromImage(letterboxed, framedata.blob, 1.0 / 255.0, {size, size}, cv::Scalar(), /*swapRB=*/true, /*crop=*/false);
+}
+
 std::vector<Detection> postprocess(const cv::Mat &out, const LetterboxInfo &lb, const cv::Size &orig, const Config &cfg)
 {
     // YOLOV5 output: [1, num_boxes, 5 + num_classes]
@@ -186,9 +194,8 @@ int main(int argc, char **argv)
     cv::Mat frame, input, resized, blob;
     LetterboxInfo lb{};
     Config config;
-    FrameData framedata{
+    FrameData fd{};
 
-    };
     std::vector<std::string> names; // empty is fine: draw() falls back to class ids
     {
         std::ifstream f("assets/coco.names");
@@ -199,8 +206,10 @@ int main(int argc, char **argv)
     }
 
     double fps_ema = 0.0;
-    while (read_frame(cap, is_camera, framedata))
+    while (read_frame(cap, is_camera, fd))
     {
+
+        preprocess(fd, config.input_size);
 
         // letterbox(frame, resized, input, config.input_size, lb);
         // cv::dnn::blobFromImage(input, blob, 1.0 / 255.0, {config.input_size, config.input_size}, cv::Scalar(), /*swapRB=*/true, /*crop=*/false);
@@ -211,7 +220,7 @@ int main(int argc, char **argv)
         // const auto dets = postprocess(out, lb, frame.size(), config);
         // draw(frame, dets, names);
 
-        cv::imshow("Playback", framedata.frame);
+        cv::imshow("Playback", fd.frame);
 
         const int key = cv::waitKey(1) & 0xFF;
         if (key == 'q' || key == 27)
