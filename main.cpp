@@ -6,7 +6,6 @@
 #include <string>
 #include <cmath>
 #include <set>
-#include <sstream>
 #include <vector>
 
 struct Config
@@ -29,19 +28,6 @@ struct LetterboxInfo
     float scale;
     int pad_x, pad_y;
 };
-
-long rss_kb()
-{
-    std::ifstream f("/proc/self/status");
-    for (std::string k; f >> k;)
-        if (k == "VmRSS:")
-        {
-            long v;
-            f >> v;
-            return v;
-        }
-    return -1;
-}
 
 void letterbox(const cv::Mat &src, cv::Mat &resized, cv::Mat &out, int size, LetterboxInfo &lb)
 {
@@ -128,14 +114,12 @@ void draw(cv::Mat &frame, const std::vector<Detection> &dets,
         const std::string name = d.class_id < static_cast<int>(names.size())
                                      ? names[d.class_id]
                                      : std::to_string(d.class_id);
-        std::ostringstream label;
-        label << name << " " << cv::format("%.2f", d.conf);
+        const std::string label = name + cv::format(" %.2f", d.conf);
 
-        int base = 0;
-        const cv::Size ts = cv::getTextSize(label.str(), cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &base);
+        const cv::Size ts = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, nullptr);
         const int y = std::max(d.box.y, ts.height + 4);
         cv::rectangle(frame, {d.box.x, y - ts.height - 4}, {d.box.x + ts.width + 4, y}, color, cv::FILLED);
-        cv::putText(frame, label.str(), {d.box.x + 2, y - 3},
+        cv::putText(frame, label, {d.box.x + 2, y - 3},
                     cv::FONT_HERSHEY_SIMPLEX, 0.5, {255, 255, 255}, 1, cv::LINE_AA);
     }
 }
@@ -180,14 +164,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    // Pace playback with the file's FPS
-    double fps = cap.get(cv::CAP_PROP_FPS);
-    if (fps <= 0)
-        fps = 30.0;
-    const int delay_ms = std::max(1, static_cast<int>(1000.0 / fps));
-
     cv::Mat frame, input, resized, blob;
-    std::vector<cv::Mat> outputs;
     LetterboxInfo lb{};
     Config config;
     std::vector<std::string> names; // empty is fine: draw() falls back to class ids
@@ -199,7 +176,6 @@ int main(int argc, char **argv)
             names.push_back(line);
     }
 
-    const auto out_names = net.getUnconnectedOutLayersNames();
     while (cap.read(frame))
     {
         if (is_camera)
@@ -209,16 +185,12 @@ int main(int argc, char **argv)
         cv::dnn::blobFromImage(input, blob, 1.0 / 255.0, {config.input_size, config.input_size}, cv::Scalar(), /*swapRB=*/true, /*crop=*/false);
 
         net.setInput(blob);
-        net.forward(outputs, out_names);
+        const cv::Mat out = net.forward();
 
-        const auto dets = postprocess(outputs[0], lb, frame.size(), config);
+        const auto dets = postprocess(out, lb, frame.size(), config);
         draw(frame, dets, names);
 
         cv::imshow("Playback", frame);
-
-        static int n = 0;
-        if (++n % 100 == 0)
-            std::cerr << "frame " << n << " rss " << rss_kb() / 1024 << " MB\n";
 
         const int key = cv::waitKey(1) & 0xFF;
         if (key == 'q' || key == 27)
