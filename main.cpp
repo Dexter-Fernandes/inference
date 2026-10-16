@@ -1,4 +1,5 @@
 #include <opencv2/opencv.hpp>
+#include <CLI/CLI.hpp>
 
 #include <algorithm>
 #include <fstream>
