@@ -1,3 +1,4 @@
+#include <nvtx3/nvtx3.hpp>
 #include <opencv2/opencv.hpp>
 #include <CLI/CLI.hpp>
 
@@ -190,6 +191,9 @@ int main(int argc, char **argv)
     std::string source = "0";
     app.add_option("-s,--source", source, "Source");
 
+    Config config;
+    app.add_option("-i,--input_size", config.input_size, "Model input size (must match the exported model)");
+
     CLI11_PARSE(app, argc, argv);
 
     cv::dnn::Net net;
@@ -220,7 +224,6 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    Config config;
     FrameData fd{};
 
     std::vector<std::string> names; // empty is fine: draw() falls back to class ids
@@ -241,9 +244,13 @@ int main(int argc, char **argv)
             for (auto *tm : {&t.read, &t.pre, &t.infer, &t.post, &t.render})
                 tm->reset();
 
-        t.read.start();
-        const bool ret = read_frame(cap, is_camera, fd);
-        t.read.stop();
+        bool ret;
+        {
+            nvtx3::scoped_range r{"read"};
+            t.read.start();
+            ret = read_frame(cap, is_camera, fd);
+            t.read.stop();
+        }
         if (!ret)
         {
             break;
@@ -252,17 +259,26 @@ int main(int argc, char **argv)
         frame_tm.reset();
         frame_tm.start();
 
-        t.pre.start();
-        preprocess(fd, config.input_size);
-        t.pre.stop();
+        {
+            nvtx3::scoped_range r{"pre"};
+            t.pre.start();
+            preprocess(fd, config.input_size);
+            t.pre.stop();
+        }
 
-        t.infer.start();
-        infer(net, fd);
-        t.infer.stop();
+        {
+            nvtx3::scoped_range r{"infer"};
+            t.infer.start();
+            infer(net, fd);
+            t.infer.stop();
+        }
 
-        t.post.start();
-        postprocess_stage(fd, config);
-        t.post.stop();
+        {
+            nvtx3::scoped_range r{"post"};
+            t.post.start();
+            postprocess_stage(fd, config);
+            t.post.stop();
+        }
 
         frame_tm.stop();
         const double fps = 1.0 / frame_tm.getTimeSec();
@@ -271,9 +287,12 @@ int main(int argc, char **argv)
         else
             fps_ema = 0.9 * fps_ema + 0.1 * fps;
 
-        t.render.start();
-        render(fd, names, fps_ema);
-        t.render.stop();
+        {
+            nvtx3::scoped_range r{"render"};
+            t.render.start();
+            render(fd, names, fps_ema);
+            t.render.stop();
+        }
 
         if (n % 100 == 0)
         {

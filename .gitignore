@@ -5,3 +5,4 @@ assets/*
 .vscode/
 heaptrack.*.zst
 perf.*
+prof.*

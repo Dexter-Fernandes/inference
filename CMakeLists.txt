@@ -23,3 +23,4 @@ FetchContent_MakeAvailable(cli11)
 
 add_executable(inference main.cpp)
 target_link_libraries(inference PRIVATE ${OpenCV_LIBS} CLI11::CLI11)
+target_include_directories(inference PRIVATE ${CUDA_TOOLKIT_ROOT_DIR}/include)
