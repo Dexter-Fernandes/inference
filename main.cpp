@@ -180,15 +180,17 @@ bool read_frame(cv::VideoCapture &cap, bool flip, FrameData &framedata)
 
 int main(int argc, char **argv)
 {
-    if (argc < 2 || argc > 3)
-    {
-        std::cout << "Usage: " << argv[0]
-                  << " <video path|camera_index> <model.onnx>\n";
-        return 1;
-    }
 
-    const std::string model_path = argv[1];
-    const std::string source = argc > 2 ? argv[2] : "0";
+    CLI::App app("Runs an object detection on a video or webcam");
+    argv = app.ensure_utf8(argv);
+
+    std::string model_path = "assets/yolov5s.onnx";
+    app.add_option("-m,--model_path", model_path, "Path to the model.onnx");
+
+    std::string source = "0";
+    app.add_option("-s,--source", source, "Source");
+
+    CLI11_PARSE(app, argc, argv);
 
     cv::dnn::Net net;
     try
