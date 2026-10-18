@@ -42,7 +42,8 @@ struct FrameData
     cv::Mat frame; // original, drawn on at the end
     cv::Mat blob;  // NCHW input to the net
     LetterboxInfo lb;
-    cv::Mat out; // raw net output
+    cv::Mat out;      // net output rows that passed the GPU objectness filter
+    int num_kept = 0; // valid rows at the start of out
     std::vector<Detection> dets;
 };
 
@@ -83,6 +84,9 @@ void preprocess(FrameData &framedata, int size)
     cv::dnn::blobFromImage(letterboxed, framedata.blob, 1.0 / 255.0, {size, size}, cv::Scalar(), /*swapRB=*/true, /*crop=*/false);
 }
 
+// filter.cu
+void filter_rows(const float *d_out, int num_boxes, int stride, float thr, float *d_kept, int *d_count, cudaStream_t s);
+
 void check(NppStatus s)
 {
     if (s < NPP_SUCCESS)
@@ -121,6 +125,8 @@ struct Trt
     std::unique_ptr<nvinfer1::IExecutionContext> context;
     cudaStream_t stream = nullptr;
     float *d_in = nullptr, *d_out = nullptr;
+    float *d_kept = nullptr; // filtered output rows, same capacity as d_out
+    int *d_count = nullptr;
     nvinfer1::Dims in_dims{}, out_dims{};
 
     explicit Trt(const std::string &engine_path)
@@ -151,12 +157,16 @@ struct Trt
             check(cudaMalloc(&buf, volume(d) * sizeof(float)));
             context->setTensorAddress(name, buf);
         }
+        check(cudaMalloc(&d_kept, volume(out_dims) * sizeof(float)));
+        check(cudaMalloc(&d_count, sizeof(int)));
     }
 
     ~Trt()
     {
         cudaFree(d_in);
         cudaFree(d_out);
+        cudaFree(d_kept);
+        cudaFree(d_count);
         cudaStreamDestroy(stream);
     }
     Trt(const Trt &) = delete;
@@ -256,20 +266,37 @@ void preprocess_cpu(FrameData &framedata, int size, Trt &trt)
     check(cudaStreamSynchronize(trt.stream));
 }
 
-void infer(Trt &trt, FrameData &framedata)
+// Runs the engine, then drops rows below the objectness threshold on the GPU so only
+// the survivors cross PCIe (a few hundred rows instead of the full 8.6 MB output).
+void infer(Trt &trt, FrameData &framedata, const Config &cfg)
 {
-    if (!trt.context->enqueueV3(trt.stream))
-        throw std::runtime_error("enqueueV3 failed");
-    check(cudaMemcpyAsync(framedata.out.data, trt.d_out, framedata.out.total() * sizeof(float),
-                          cudaMemcpyDeviceToHost, trt.stream));
-    check(cudaStreamSynchronize(trt.stream));
+    const int num_boxes = trt.out_dims.d[1];
+    const int stride = trt.out_dims.d[2];
+    {
+        nvtx3::scoped_range r{"trt"};
+        if (!trt.context->enqueueV3(trt.stream))
+            throw std::runtime_error("enqueueV3 failed");
+    }
+    {
+        nvtx3::scoped_range r{"filter"};
+        filter_rows(trt.d_out, num_boxes, stride, cfg.conf_thr, trt.d_kept, trt.d_count, trt.stream);
+        check(cudaGetLastError());
+    }
+    {
+        nvtx3::scoped_range r{"d2h"};
+        check(cudaMemcpyAsync(&framedata.num_kept, trt.d_count, sizeof(int), cudaMemcpyDeviceToHost, trt.stream));
+        check(cudaStreamSynchronize(trt.stream));
+        check(cudaMemcpyAsync(framedata.out.data, trt.d_kept, static_cast<size_t>(framedata.num_kept) * stride * sizeof(float),
+                              cudaMemcpyDeviceToHost, trt.stream));
+        check(cudaStreamSynchronize(trt.stream));
+    }
 }
 
-std::vector<Detection> postprocess(const cv::Mat &out, const LetterboxInfo &lb, const cv::Size &orig, const Config &cfg)
+std::vector<Detection> postprocess(const cv::Mat &out, int num_boxes, const LetterboxInfo &lb, const cv::Size &orig, const Config &cfg)
 {
     // YOLOV5 output: [1, num_boxes, 5 + num_classes]
     // row = cx, cy, w, h,  objectness, class scores ...
-    const int num_boxes = out.size[1];
+    // Only the first num_boxes rows are valid.
     const int stride = out.size[2];
     const int num_cls = stride - 5;
     const auto *data = reinterpret_cast<const float *>(out.data);
@@ -324,7 +351,7 @@ std::vector<Detection> postprocess(const cv::Mat &out, const LetterboxInfo &lb, 
 
 void postprocess_stage(FrameData &framedata, const Config &config)
 {
-    framedata.dets = postprocess(framedata.out, framedata.lb, framedata.frame.size(), config);
+    framedata.dets = postprocess(framedata.out, framedata.num_kept, framedata.lb, framedata.frame.size(), config);
 }
 
 void draw(cv::Mat &frame, const std::vector<Detection> &dets,
@@ -465,7 +492,7 @@ int main(int argc, char **argv)
         {
             nvtx3::scoped_range r{"infer"};
             t.infer.start();
-            infer(*trt, fd);
+            infer(*trt, fd, config);
             t.infer.stop();
         }
 
