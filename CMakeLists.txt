@@ -5,7 +5,7 @@ set(CMAKE_CUDA_ARCHITECTURES 50) # GeForce 940MX
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CUDA_STANDARD 17) # nvcc 12.1 + GCC 9 can't do C++20
+set(CMAKE_CUDA_STANDARD 17) # CMake 3.24 has no CUDA20 dialect for nvcc
 
 # Optimised build with debug symbols
 if(NOT CMAKE_BUILD_TYPE)

@@ -17,4 +17,11 @@ RUN git clone --depth 1 -b ${OPENCV_VERSION} https://github.com/opencv/opencv.gi
     && ldconfig \
     && rm -rf /tmp/opencv
 
+# GCC 9 has no std::jthread; nvcc 12.1 accepts g++-11 as its host compiler.
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends software-properties-common \
+    && add-apt-repository -y ppa:ubuntu-toolchain-r/test \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends g++-11 \
+    && rm -rf /var/lib/apt/lists/*
+ENV CC=gcc-11 CXX=g++-11 CUDAHOSTCXX=g++-11
+
 WORKDIR /work
