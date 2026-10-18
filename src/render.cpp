@@ -1,6 +1,5 @@
 #include "render.hpp"
 
-#include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
 
 #include <algorithm>
@@ -34,6 +33,4 @@ void render(FrameData &framedata, const std::vector<std::string> &names, double 
     const std::string hud = cv::format("FPS: %.1f  Det: %zu", fps, framedata.dets.size());
     cv::putText(framedata.frame, hud, {10, 25}, cv::FONT_HERSHEY_SIMPLEX, 0.7, {0, 0, 0}, 4, cv::LINE_AA);
     cv::putText(framedata.frame, hud, {10, 25}, cv::FONT_HERSHEY_SIMPLEX, 0.7, {0, 255, 0}, 1, cv::LINE_AA);
-
-    cv::imshow("Playback", framedata.frame);
 }

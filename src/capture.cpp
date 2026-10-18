@@ -2,23 +2,53 @@
 
 #include <opencv2/core.hpp>
 
-std::pair<cv::VideoCapture, bool> open_source(const std::string &source)
+#include <chrono>
+#include <stdexcept>
+#include <thread>
+
+namespace
 {
-    cv::VideoCapture cap;
-    // is_camera if source only contains numbers
-    const bool is_camera = !source.empty() && source.find_first_not_of("0123456789") == std::string::npos;
-    if (is_camera)
-        cap.open(std::stoi(source));
-    else
-        cap.open(source);
-    return {std::move(cap), is_camera};
+constexpr std::chrono::milliseconds kReconnectInterval{500};
+constexpr std::chrono::seconds kReconnectBudget{5};
+constexpr int kReconnectAttempts = kReconnectBudget / kReconnectInterval;
+} // namespace
+
+bool is_camera_source(const std::string &source)
+{
+    return !source.empty() && source.find_first_not_of("0123456789") == std::string::npos;
 }
 
-bool read_frame(cv::VideoCapture &cap, bool flip, FrameData &framedata)
+Capture::Capture(const std::string &source) : source_(source), is_camera_(is_camera_source(source))
 {
-    if (!cap.read(framedata.frame))
+    if (is_camera_)
+        cap_.open(std::stoi(source_));
+    else
+        cap_.open(source_);
+    if (!cap_.isOpened())
+        throw std::runtime_error("Failed to open source: " + source_);
+}
+
+bool Capture::read(cv::Mat &frame)
+{
+    if (!cap_.read(frame) && !(is_camera_ && reconnect(frame)))
         return false;
-    if (flip)
-        cv::flip(framedata.frame, framedata.frame, 1);
+    if (is_camera_)
+        cv::flip(frame, frame, 1);
     return true;
+}
+
+bool Capture::reconnect(cv::Mat &frame)
+{
+    cap_.release();
+    for (int i = 0; i < kReconnectAttempts; i++)
+    {
+        std::this_thread::sleep_for(kReconnectInterval);
+        if (cap_.open(std::stoi(source_)) && cap_.read(frame))
+        {
+            reconnects_++;
+            return true;
+        }
+        cap_.release();
+    }
+    return false;
 }

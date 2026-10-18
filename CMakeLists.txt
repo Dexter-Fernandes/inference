@@ -34,7 +34,7 @@ set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(cli11 nvtx googletest)
 
 add_library(inference_core STATIC
-    src/capture.cpp src/preprocess.cpp src/engine.cpp src/postprocess.cpp src/render.cpp src/filter.cu)
+    src/capture.cpp src/report.cpp src/preprocess.cpp src/engine.cpp src/postprocess.cpp src/render.cpp src/filter.cu)
 target_include_directories(inference_core PUBLIC src)
 target_link_libraries(inference_core PUBLIC ${OpenCV_LIBS} nvtx3-cpp nvinfer
     CUDA::cudart CUDA::nppc CUDA::nppidei CUDA::nppial)
@@ -46,7 +46,7 @@ target_link_libraries(inference PRIVATE inference_core CLI11::CLI11)
 enable_testing()
 include(GoogleTest)
 
-add_executable(unit_tests tests/test_letterbox.cpp tests/test_postprocess.cpp)
+add_executable(unit_tests tests/test_letterbox.cpp tests/test_postprocess.cpp tests/test_capture.cpp tests/test_report.cpp)
 target_link_libraries(unit_tests PRIVATE inference_core GTest::gtest_main)
 gtest_discover_tests(unit_tests DISCOVERY_MODE PRE_TEST)
 
