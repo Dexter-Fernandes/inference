@@ -1,12 +1,9 @@
 #include "capture.hpp"
 #include "common.hpp"
 #include "engine.hpp"
-#include "postprocess.hpp"
-#include "preprocess.hpp"
-#include "render.hpp"
+#include "pipeline.hpp"
 #include "report.hpp"
 
-#include <nvtx3/nvtx3.hpp>
 #include <opencv2/highgui.hpp>
 #include <CLI/CLI.hpp>
 
@@ -17,8 +14,8 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
-#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
@@ -36,8 +33,6 @@ void install_signal_handlers()
     for (const int sig : {SIGINT, SIGTERM})
         sigaction(sig, &sa, nullptr);
 }
-
-constexpr int kWarmupFrame = 10; // timers reset here
 
 int run(int argc, char **argv)
 {
@@ -93,9 +88,6 @@ int run(int argc, char **argv)
 
     Capture cap(source);
 
-    Frame fd = make_frame(trt);
-    NppPre npp(trt.stream.get());
-
     std::vector<std::string> names; // empty is fine: draw() falls back to class ids
     {
         std::ifstream f("assets/coco.names");
@@ -105,103 +97,45 @@ int run(int argc, char **argv)
             names.push_back(line);
     }
 
+    Pipeline pipeline(trt, cap, config, use_npp, std::move(names));
     install_signal_handlers();
 
     using Clock = std::chrono::steady_clock;
-    cv::TickMeter frame_tm;
-    StageTimers t{};
-    double fps_ema = 0.0;
     int frames = 0;
+    StageMs stage_ms;
+    std::vector<double> latency_ms;
     Clock::time_point measure_start, measure_end;
     StopReason stopped_by = StopReason::Eof;
-    for (int n = 1;; n++)
-    {
-        if (g_stop.load(std::memory_order_relaxed))
-        {
-            stopped_by = StopReason::Signal;
-            break;
-        }
-
-        if (n == kWarmupFrame)
-        {
-            for (auto *tm : {&t.read, &t.pre, &t.infer, &t.post, &t.render})
-                tm->reset();
-            measure_start = Clock::now();
-        }
-
-        bool ret;
-        {
-            nvtx3::scoped_range r{"read"};
-            t.read.start();
-            ret = cap.read(fd.image);
-            t.read.stop();
-        }
-        if (!ret)
-            break;
-
-        frame_tm.reset();
-        frame_tm.start();
-
-        {
-            nvtx3::scoped_range r{"pre"};
-            t.pre.start();
-            if (use_npp)
-                preprocess_npp(fd, config.input_size, npp);
-            else
-                preprocess_cpu(fd, config.input_size, trt.stream.get());
-            t.pre.stop();
-        }
-
-        {
-            nvtx3::scoped_range r{"infer"};
-            t.infer.start();
-            infer(trt, fd, config);
-            t.infer.stop();
-        }
-
-        {
-            nvtx3::scoped_range r{"post"};
-            t.post.start();
-            postprocess_stage(fd, config);
-            t.post.stop();
-        }
-
-        frame_tm.stop();
-        const double fps = 1.0 / frame_tm.getTimeSec();
-        if (fps_ema == 0.0)
-            fps_ema = fps;
-        else
-            fps_ema = 0.9 * fps_ema + 0.1 * fps;
-
-        {
-            nvtx3::scoped_range r{"render"};
-            t.render.start();
-            render(fd, names, fps_ema);
-            if (!headless)
-                cv::imshow("Playback", fd.image);
-            t.render.stop();
-        }
-
-        if (n % 100 == 0)
-        {
-            std::cerr << cv::format("frame %d: read %.1f | pre %.1f | infer %.1f | post %.1f | render %.1f ms\n",
-                                    n, t.read.getAvgTimeMilli(), t.pre.getAvgTimeMilli(), t.infer.getAvgTimeMilli(), t.post.getAvgTimeMilli(), t.render.getAvgTimeMilli());
-        }
-
+    pipeline.run([&](Frame &f) {
+        if (!headless)
+            cv::imshow("Playback", f.image);
         const int key = headless ? 0 : cv::waitKey(1) & 0xFF;
-        frames = n;
-        measure_end = Clock::now();
+
+        const Clock::time_point now = Clock::now();
+        frames = f.id;
+        stage_ms = f.stage_ms;
+        if (f.id == kWarmupFrame - 1) // throughput counts the intervals that end at frames 10..N
+            measure_start = now;
+        if (f.id >= kWarmupFrame)
+        {
+            measure_end = now;
+            latency_ms.push_back(std::chrono::duration<double, std::milli>(now - f.captured).count());
+        }
+
+        if (f.id % 100 == 0)
+            std::cerr << cv::format("frame %d: read %.1f | pre %.1f | infer %.1f | post %.1f | render %.1f ms\n",
+                                    f.id, stage_ms.read, stage_ms.pre, stage_ms.infer, stage_ms.post, stage_ms.render);
+
         if (key == 'q' || key == 27)
-        {
             stopped_by = StopReason::Key;
-            break;
-        }
-        if (n == max_frames)
-        {
+        else if (g_stop.load(std::memory_order_relaxed))
+            stopped_by = StopReason::Signal;
+        else if (f.id == max_frames)
             stopped_by = StopReason::Frames;
-            break;
-        }
-    }
+        else
+            return true;
+        return false;
+    });
 
     if (json_out)
     {
@@ -210,17 +144,19 @@ int run(int argc, char **argv)
         report.npp = use_npp;
         report.frames = frames;
         report.reconnects = cap.reconnects();
+        report.dropped = pipeline.dropped();
         report.stopped_by = stopped_by;
         if (frames >= kWarmupFrame)
         {
             report.measured_frames = frames - kWarmupFrame + 1;
             report.wall_s = std::chrono::duration<double>(measure_end - measure_start).count();
         }
-        report.read_ms = t.read.getAvgTimeMilli();
-        report.pre_ms = t.pre.getAvgTimeMilli();
-        report.infer_ms = t.infer.getAvgTimeMilli();
-        report.post_ms = t.post.getAvgTimeMilli();
-        report.render_ms = t.render.getAvgTimeMilli();
+        report.read_ms = stage_ms.read;
+        report.pre_ms = stage_ms.pre;
+        report.infer_ms = stage_ms.infer;
+        report.post_ms = stage_ms.post;
+        report.render_ms = stage_ms.render;
+        report.latency = summarize_latency(std::move(latency_ms));
         write_json(*json_out, report);
     }
     return 0;

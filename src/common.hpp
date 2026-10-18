@@ -30,6 +30,12 @@ struct LetterboxInfo
     int pad_x, pad_y;
 };
 
+// Average ms per stage since the warmup frame.
+struct StageMs
+{
+    double read = 0, pre = 0, infer = 0, post = 0, render = 0;
+};
+
 // One video frame on its way through the stages. d_in and out are allocated once (make_frame)
 // and reused, so a frame owns its engine input and nothing is shared between frames in flight.
 struct Frame
@@ -38,14 +44,10 @@ struct Frame
     std::chrono::steady_clock::time_point captured;
     cv::Mat image; // original, drawn on at the end
     LetterboxInfo lb{};
-    cv::Mat blob;              // NCHW input to the net, CPU preprocess only
-    DeviceBuffer<float> d_in;  // engine input
-    cv::Mat out;               // net output rows that passed the GPU objectness filter
-    int num_kept = 0;          // valid rows at the start of out
+    cv::Mat blob;             // NCHW input to the net, CPU preprocess only
+    DeviceBuffer<float> d_in; // engine input
+    cv::Mat out;              // net output rows that passed the GPU objectness filter
+    int num_kept = 0;         // valid rows at the start of out
     std::vector<Detection> dets;
-};
-
-struct StageTimers
-{
-    cv::TickMeter read, pre, infer, post, render;
+    StageMs stage_ms; // each stage writes its own running average as the frame passes
 };

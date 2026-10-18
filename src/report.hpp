@@ -2,6 +2,7 @@
 
 #include <iosfwd>
 #include <string>
+#include <vector>
 
 enum class StopReason
 {
@@ -10,6 +11,14 @@ enum class StopReason
     Signal,
     Key
 };
+
+struct LatencyMs
+{
+    double p50 = 0.0, p95 = 0.0, p99 = 0.0, max = 0.0;
+};
+
+// Nearest-rank percentiles; all zero when ms is empty.
+LatencyMs summarize_latency(std::vector<double> ms);
 
 struct RunReport
 {
@@ -20,6 +29,8 @@ struct RunReport
     double wall_s = 0.0;     // wall time of the measured frames
     double read_ms = 0.0, pre_ms = 0.0, infer_ms = 0.0, post_ms = 0.0, render_ms = 0.0;
     int reconnects = 0;
+    int dropped = 0;    // live frames skipped because the pipeline was full
+    LatencyMs latency;  // capture to sink, over the measured frames
     StopReason stopped_by = StopReason::Eof;
 };
 

@@ -1,5 +1,7 @@
 #include "report.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <iomanip>
 #include <ostream>
 #include <sstream>
@@ -35,6 +37,15 @@ std::string json_escape(const std::string &s)
     return out;
 }
 
+LatencyMs summarize_latency(std::vector<double> ms)
+{
+    if (ms.empty())
+        return {};
+    std::sort(ms.begin(), ms.end());
+    const auto rank = [&](double p) { return ms[static_cast<size_t>(std::ceil(p / 100.0 * ms.size())) - 1]; };
+    return {rank(50), rank(95), rank(99), ms.back()};
+}
+
 void write_json(std::ostream &os, const RunReport &r)
 {
     const double fps = r.wall_s > 0.0 ? r.measured_frames / r.wall_s : 0.0;
@@ -45,6 +56,9 @@ void write_json(std::ostream &os, const RunReport &r)
       << ", \"wall_s\": " << r.wall_s << ", \"fps\": " << fps
       << ", \"stage_ms\": {\"read\": " << r.read_ms << ", \"pre\": " << r.pre_ms
       << ", \"infer\": " << r.infer_ms << ", \"post\": " << r.post_ms << ", \"render\": " << r.render_ms
-      << "}, \"reconnects\": " << r.reconnects << ", \"stopped_by\": \"" << to_string(r.stopped_by) << "\"}\n";
+      << "}, \"reconnects\": " << r.reconnects << ", \"dropped\": " << r.dropped
+      << ", \"latency_ms\": {\"p50\": " << r.latency.p50 << ", \"p95\": " << r.latency.p95
+      << ", \"p99\": " << r.latency.p99 << ", \"max\": " << r.latency.max
+      << "}, \"stopped_by\": \"" << to_string(r.stopped_by) << "\"}\n";
     os << s.str() << std::flush;
 }

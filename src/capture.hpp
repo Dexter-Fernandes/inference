@@ -18,6 +18,7 @@ public:
     // False at the end of a file, or when a camera did not come back in time.
     bool read(cv::Mat &frame);
 
+    bool is_camera() const { return is_camera_; }
     int reconnects() const { return reconnects_; }
 
 private:

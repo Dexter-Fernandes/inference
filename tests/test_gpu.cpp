@@ -1,5 +1,7 @@
+#include "capture.hpp"
 #include "engine.hpp"
 #include "filter.hpp"
+#include "pipeline.hpp"
 #include "postprocess.hpp"
 #include "preprocess.hpp"
 
@@ -12,8 +14,11 @@
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <numeric>
 #include <set>
+#include <stdexcept>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -256,5 +261,81 @@ TEST_F(WithEngine, TensorRtAgreesWithOnnxOnCpu)
     EXPECT_GE(matched_trt, 0.99 * total_trt);
     EXPECT_GE(matched_cpu, 0.99 * total_cpu);
     EXPECT_LT(median, 1e-3);
+}
+
+// A frame's detections as comparable values, sorted so the GPU filter's row order cannot matter.
+using DetKey = std::tuple<int, float, int, int, int, int>;
+std::vector<DetKey> sorted_dets(const std::vector<Detection> &dets)
+{
+    std::vector<DetKey> keys;
+    for (const Detection &d : dets)
+        keys.emplace_back(d.class_id, d.conf, d.box.x, d.box.y, d.box.width, d.box.height);
+    std::sort(keys.begin(), keys.end());
+    return keys;
+}
+
+TEST_F(WithEngine, PipelineMatchesSerialStagesFrameForFrame)
+{
+    const std::string video = kAssets + "/test.mp4";
+    REQUIRE_ASSET(video);
+    constexpr int kFrames = 100;
+    Config cfg;
+    cfg.input_size = trt_->in_dims.d[2];
+
+    std::vector<std::vector<DetKey>> serial;
+    {
+        Capture cap(video);
+        Frame f = make_frame(*trt_);
+        NppPre npp(trt_->stream.get());
+        for (int n = 0; n < kFrames; ++n)
+        {
+            ASSERT_TRUE(cap.read(f.image)) << "frame " << n + 1;
+            preprocess_npp(f, cfg.input_size, npp);
+            infer(*trt_, f, cfg);
+            postprocess_stage(f, cfg);
+            serial.push_back(sorted_dets(f.dets));
+        }
+    }
+
+    std::vector<int> ids;
+    std::vector<std::vector<DetKey>> piped;
+    Capture cap(video);
+    Pipeline pipeline(*trt_, cap, cfg, /*use_npp=*/true, {});
+    pipeline.run([&](Frame &f) {
+        ids.push_back(f.id);
+        piped.push_back(sorted_dets(f.dets));
+        return f.id < kFrames;
+    });
+
+    std::vector<int> want_ids(kFrames);
+    std::iota(want_ids.begin(), want_ids.end(), 1);
+    EXPECT_EQ(ids, want_ids);
+    ASSERT_EQ(piped.size(), serial.size());
+    size_t total = 0;
+    for (size_t i = 0; i < serial.size(); ++i)
+    {
+        EXPECT_EQ(piped[i], serial[i]) << "frame " << i + 1;
+        total += serial[i].size();
+    }
+    EXPECT_GT(total, 0u) << "a comparison of empty frames proves nothing";
+    EXPECT_EQ(pipeline.dropped(), 0);
+}
+
+TEST_F(WithEngine, PipelineRethrowsASinkExceptionAfterJoining)
+{
+    const std::string video = kAssets + "/test.mp4";
+    REQUIRE_ASSET(video);
+    Config cfg;
+    cfg.input_size = trt_->in_dims.d[2];
+    Capture cap(video);
+    Pipeline pipeline(*trt_, cap, cfg, /*use_npp=*/true, {});
+    int seen = 0;
+    EXPECT_THROW(pipeline.run([&](Frame &f) {
+        if (++seen == 5)
+            throw std::runtime_error("sink failed at frame " + std::to_string(f.id));
+        return true;
+    }),
+                 std::runtime_error);
+    EXPECT_EQ(seen, 5);
 }
 } // namespace
