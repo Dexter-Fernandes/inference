@@ -313,7 +313,10 @@ int main(int argc, char **argv)
     app.add_option("-i,--input_size", config.input_size, "Model input size (must match the exported model)");
 
     bool use_npp = true;
-    app.add_flag("--npp", use_npp, "Preprocess on GPU with NPP");
+    app.add_flag("--npp,!--no-npp", use_npp, "Preprocess on GPU with NPP");
+
+    bool use_cpu = false;
+    app.add_flag("--cpu", use_cpu, "Run inference on the CPU (cv::dnn OpenCV backend)");
 
     CLI11_PARSE(app, argc, argv);
 
@@ -328,8 +331,16 @@ int main(int argc, char **argv)
                   << e.what() << "\n";
         return 1;
     }
-    net.setPreferableBackend(cv::dnn::DNN_BACKEND_CUDA);
-    net.setPreferableTarget(cv::dnn::DNN_TARGET_CUDA);
+    if (use_cpu)
+    {
+        net.setPreferableBackend(cv::dnn::DNN_BACKEND_OPENCV);
+        net.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
+    }
+    else
+    {
+        net.setPreferableBackend(cv::dnn::DNN_BACKEND_CUDA);
+        net.setPreferableTarget(cv::dnn::DNN_TARGET_CUDA);
+    }
 
     cv::VideoCapture cap;
     // is_camera if source only contains numbers
