@@ -18,8 +18,9 @@ struct NppPre
     NppStreamContext ctx{};
     int size = 0;
     cv::Mat resized; // host, reused across frames
-    DeviceBuffer<Npp8u> d_resized, d_box;
+    DeviceBuffer<Npp8u> d_box;
     DeviceBuffer<Npp32f> d_f32;
+    cv::Size filled_for; // resized size that d_box's 114 border was laid out for
 
     explicit NppPre(cudaStream_t stream);
 
@@ -27,8 +28,8 @@ struct NppPre
     void ensure(int sz);
 };
 
-// Resize on the CPU, upload the small image, then pad/convert/normalise on the GPU
-// straight into the engine's input buffer.
+// Resize on the CPU, upload the small image into the padded box, then convert/normalise
+// on the GPU straight into the engine's input buffer.
 void preprocess_npp(FrameData &framedata, int size, NppPre &npp, Trt &trt);
 
 void preprocess_cpu(FrameData &framedata, int size, Trt &trt);

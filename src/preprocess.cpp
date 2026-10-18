@@ -50,8 +50,8 @@ void NppPre::ensure(int sz)
     if (sz == size)
         return;
     size = sz;
+    filled_for = {};
     const size_t box_px = static_cast<size_t>(sz) * sz;
-    d_resized = make_device<Npp8u>(box_px * 3); // resized fits inside the box
     d_box = make_device<Npp8u>(box_px * 3);
     d_f32 = make_device<Npp32f>(box_px * 3);
 }
@@ -63,6 +63,13 @@ void preprocess_npp(FrameData &framedata, int size, NppPre &npp, Trt &trt)
     const int nw = rs.width, nh = rs.height;
 
     npp.ensure(size);
+    // The border is the same every frame, so it is laid down once. nppiCopyConstBorder_8u_C3R_Ctx
+    // would redo it per frame, but in NPP 12.1 it ignores ctx.hStream and races the upload.
+    if (rs != npp.filled_for)
+    {
+        check(cudaMemsetAsync(npp.d_box.get(), 114, static_cast<size_t>(size) * size * 3, trt.stream.get()));
+        npp.filled_for = rs;
+    }
     const int rs_step = nw * 3;
     const int box_step = size * 3;
     const int f32_step = size * 3 * sizeof(Npp32f);
@@ -72,16 +79,13 @@ void preprocess_npp(FrameData &framedata, int size, NppPre &npp, Trt &trt)
 
     {
         nvtx3::scoped_range r{"h2d"};
-        check(cudaMemcpy2DAsync(npp.d_resized.get(), rs_step, npp.resized.data, npp.resized.step, rs_step, nh,
+        Npp8u *roi = npp.d_box.get() + static_cast<size_t>(lb.pad_y) * box_step + lb.pad_x * 3;
+        check(cudaMemcpy2DAsync(roi, box_step, npp.resized.data, npp.resized.step, rs_step, nh,
                                 cudaMemcpyHostToDevice, trt.stream.get()));
     }
 
     {
         nvtx3::scoped_range r{"npp"};
-        const Npp8u pad[3] = {114, 114, 114};
-        check(nppiCopyConstBorder_8u_C3R_Ctx(npp.d_resized.get(), rs_step, {nw, nh},
-                                             npp.d_box.get(), box_step, box_sz, lb.pad_y, lb.pad_x, pad, npp.ctx));
-
         const int bgr2rgb[3] = {2, 1, 0};
         check(nppiSwapChannels_8u_C3IR_Ctx(npp.d_box.get(), box_step, box_sz, bgr2rgb, npp.ctx));
 
