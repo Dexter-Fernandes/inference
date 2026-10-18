@@ -2,7 +2,6 @@
 
 #include "common.hpp"
 #include "cuda_check.hpp"
-#include "engine.hpp"
 
 #include <opencv2/core.hpp>
 
@@ -11,7 +10,7 @@ cv::Size letterbox_info(cv::Size src, int size, LetterboxInfo &lb);
 
 void letterbox(const cv::Mat &src, cv::Mat &resized, cv::Mat &out, int size, LetterboxInfo &lb);
 
-void preprocess(FrameData &framedata, int size);
+void preprocess(Frame &frame, int size);
 
 struct NppPre
 {
@@ -29,7 +28,8 @@ struct NppPre
 };
 
 // Resize on the CPU, upload the small image into the padded box, then convert/normalise
-// on the GPU straight into the engine's input buffer.
-void preprocess_npp(FrameData &framedata, int size, NppPre &npp, Trt &trt);
+// on the GPU straight into frame.d_in. Runs on npp.ctx.hStream and returns once it is done.
+void preprocess_npp(Frame &frame, int size, NppPre &npp);
 
-void preprocess_cpu(FrameData &framedata, int size, Trt &trt);
+// preprocess(), then uploads the blob into frame.d_in on stream and waits for it.
+void preprocess_cpu(Frame &frame, int size, cudaStream_t stream);

@@ -93,8 +93,7 @@ int run(int argc, char **argv)
 
     Capture cap(source);
 
-    FrameData fd{};
-    fd.out.create(trt.out_dims.nbDims, std::vector<int>(trt.out_dims.d, trt.out_dims.d + trt.out_dims.nbDims).data(), CV_32F);
+    Frame fd = make_frame(trt);
     NppPre npp(trt.stream.get());
 
     std::vector<std::string> names; // empty is fine: draw() falls back to class ids
@@ -134,7 +133,7 @@ int run(int argc, char **argv)
         {
             nvtx3::scoped_range r{"read"};
             t.read.start();
-            ret = cap.read(fd.frame);
+            ret = cap.read(fd.image);
             t.read.stop();
         }
         if (!ret)
@@ -147,9 +146,9 @@ int run(int argc, char **argv)
             nvtx3::scoped_range r{"pre"};
             t.pre.start();
             if (use_npp)
-                preprocess_npp(fd, config.input_size, npp, trt);
+                preprocess_npp(fd, config.input_size, npp);
             else
-                preprocess_cpu(fd, config.input_size, trt);
+                preprocess_cpu(fd, config.input_size, trt.stream.get());
             t.pre.stop();
         }
 
@@ -179,7 +178,7 @@ int run(int argc, char **argv)
             t.render.start();
             render(fd, names, fps_ema);
             if (!headless)
-                cv::imshow("Playback", fd.frame);
+                cv::imshow("Playback", fd.image);
             t.render.stop();
         }
 

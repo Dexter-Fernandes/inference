@@ -43,23 +43,40 @@ Trt::Trt(const std::string &engine_path)
         const char *name = engine->getIOTensorName(i);
         if (engine->getTensorDataType(name) != nvinfer1::DataType::kFLOAT)
             throw std::runtime_error(std::string("tensor ") + name + " is not float32");
-        const bool is_input = engine->getTensorIOMode(name) == nvinfer1::TensorIOMode::kINPUT;
         const nvinfer1::Dims d = engine->getTensorShape(name);
-        DeviceBuffer<float> &buf = is_input ? d_in : d_out;
-        (is_input ? in_dims : out_dims) = d;
-        buf = make_device<float>(volume(d));
-        context->setTensorAddress(name, buf.get());
+        if (engine->getTensorIOMode(name) == nvinfer1::TensorIOMode::kINPUT)
+        {
+            input_name = name;
+            in_dims = d;
+            continue;
+        }
+        out_dims = d;
+        d_out = make_device<float>(volume(d));
+        context->setTensorAddress(name, d_out.get());
     }
+    if (input_name.empty())
+        throw std::runtime_error("engine has no input tensor");
     d_kept = make_device<float>(volume(out_dims));
     d_count = make_device<int>(1);
 }
 
-void infer(Trt &trt, FrameData &framedata, const Config &cfg)
+Frame make_frame(const Trt &trt)
+{
+    Frame f;
+    f.d_in = make_device<float>(volume(trt.in_dims));
+    const std::vector<int> out_shape(trt.out_dims.d, trt.out_dims.d + trt.out_dims.nbDims);
+    f.out.create(static_cast<int>(out_shape.size()), out_shape.data(), CV_32F);
+    return f;
+}
+
+void infer(Trt &trt, Frame &frame, const Config &cfg)
 {
     const int num_boxes = trt.out_dims.d[1];
     const int stride = trt.out_dims.d[2];
     {
         nvtx3::scoped_range r{"trt"};
+        if (!trt.context->setTensorAddress(trt.input_name.c_str(), frame.d_in.get()))
+            throw std::runtime_error("setTensorAddress failed");
         if (!trt.context->enqueueV3(trt.stream.get()))
             throw std::runtime_error("enqueueV3 failed");
     }
@@ -69,9 +86,9 @@ void infer(Trt &trt, FrameData &framedata, const Config &cfg)
     }
     {
         nvtx3::scoped_range r{"d2h"};
-        check(cudaMemcpyAsync(&framedata.num_kept, trt.d_count.get(), sizeof(int), cudaMemcpyDeviceToHost, trt.stream.get()));
+        check(cudaMemcpyAsync(&frame.num_kept, trt.d_count.get(), sizeof(int), cudaMemcpyDeviceToHost, trt.stream.get()));
         check(cudaStreamSynchronize(trt.stream.get()));
-        check(cudaMemcpyAsync(framedata.out.data, trt.d_kept.get(), static_cast<size_t>(framedata.num_kept) * stride * sizeof(float),
+        check(cudaMemcpyAsync(frame.out.data, trt.d_kept.get(), static_cast<size_t>(frame.num_kept) * stride * sizeof(float),
                               cudaMemcpyDeviceToHost, trt.stream.get()));
         check(cudaStreamSynchronize(trt.stream.get()));
     }

@@ -8,4 +8,4 @@
 
 std::vector<Detection> postprocess(const cv::Mat &out, int num_boxes, const LetterboxInfo &lb, const cv::Size &orig, const Config &cfg);
 
-void postprocess_stage(FrameData &framedata, const Config &config);
+void postprocess_stage(Frame &frame, const Config &config);

@@ -61,7 +61,7 @@ std::vector<Detection> postprocess(const cv::Mat &out, int num_boxes, const Lett
     return dets;
 }
 
-void postprocess_stage(FrameData &framedata, const Config &config)
+void postprocess_stage(Frame &frame, const Config &config)
 {
-    framedata.dets = postprocess(framedata.out, framedata.num_kept, framedata.lb, framedata.frame.size(), config);
+    frame.dets = postprocess(frame.out, frame.num_kept, frame.lb, frame.image.size(), config);
 }

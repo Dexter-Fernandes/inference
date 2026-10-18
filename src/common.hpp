@@ -1,8 +1,11 @@
 #pragma once
 
+#include "cuda_check.hpp"
+
 #include <opencv2/core.hpp>
 #include <opencv2/core/utility.hpp>
 
+#include <chrono>
 #include <set>
 #include <vector>
 
@@ -27,13 +30,18 @@ struct LetterboxInfo
     int pad_x, pad_y;
 };
 
-struct FrameData
+// One video frame on its way through the stages. d_in and out are allocated once (make_frame)
+// and reused, so a frame owns its engine input and nothing is shared between frames in flight.
+struct Frame
 {
-    cv::Mat frame; // original, drawn on at the end
-    cv::Mat blob;  // NCHW input to the net
-    LetterboxInfo lb;
-    cv::Mat out;      // net output rows that passed the GPU objectness filter
-    int num_kept = 0; // valid rows at the start of out
+    int id = 0; // 1-based capture order
+    std::chrono::steady_clock::time_point captured;
+    cv::Mat image; // original, drawn on at the end
+    LetterboxInfo lb{};
+    cv::Mat blob;              // NCHW input to the net, CPU preprocess only
+    DeviceBuffer<float> d_in;  // engine input
+    cv::Mat out;               // net output rows that passed the GPU objectness filter
+    int num_kept = 0;          // valid rows at the start of out
     std::vector<Detection> dets;
 };
 

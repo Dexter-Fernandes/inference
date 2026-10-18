@@ -10,4 +10,4 @@
 void draw(cv::Mat &frame, const std::vector<Detection> &dets,
           const std::vector<std::string> &names);
 
-void render(FrameData &framedata, const std::vector<std::string> &names, double fps);
+void render(Frame &frame, const std::vector<std::string> &names, double fps);

@@ -26,11 +26,11 @@ void draw(cv::Mat &frame, const std::vector<Detection> &dets,
     }
 }
 
-void render(FrameData &framedata, const std::vector<std::string> &names, double fps)
+void render(Frame &frame, const std::vector<std::string> &names, double fps)
 {
-    draw(framedata.frame, framedata.dets, names);
+    draw(frame.image, frame.dets, names);
 
-    const std::string hud = cv::format("FPS: %.1f  Det: %zu", fps, framedata.dets.size());
-    cv::putText(framedata.frame, hud, {10, 25}, cv::FONT_HERSHEY_SIMPLEX, 0.7, {0, 0, 0}, 4, cv::LINE_AA);
-    cv::putText(framedata.frame, hud, {10, 25}, cv::FONT_HERSHEY_SIMPLEX, 0.7, {0, 255, 0}, 1, cv::LINE_AA);
+    const std::string hud = cv::format("FPS: %.1f  Det: %zu", fps, frame.dets.size());
+    cv::putText(frame.image, hud, {10, 25}, cv::FONT_HERSHEY_SIMPLEX, 0.7, {0, 0, 0}, 4, cv::LINE_AA);
+    cv::putText(frame.image, hud, {10, 25}, cv::FONT_HERSHEY_SIMPLEX, 0.7, {0, 255, 0}, 1, cv::LINE_AA);
 }

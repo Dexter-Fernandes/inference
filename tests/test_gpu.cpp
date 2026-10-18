@@ -61,13 +61,13 @@ cv::Mat noise(cv::Size size, uint64 seed)
 }
 
 // Runs preprocess_npp and reads the first 3*size*size floats of the engine input back.
-std::vector<float> npp_input(Trt &trt, NppPre &npp, const cv::Mat &frame, int size)
+std::vector<float> npp_input(Trt &trt, NppPre &npp, const cv::Mat &image, int size)
 {
-    FrameData fd{};
-    fd.frame = frame;
-    preprocess_npp(fd, size, npp, trt);
+    Frame fd = make_frame(trt);
+    fd.image = image;
+    preprocess_npp(fd, size, npp);
     std::vector<float> got(3 * static_cast<size_t>(size) * size);
-    check(cudaMemcpy(got.data(), trt.d_in.get(), got.size() * sizeof(float), cudaMemcpyDeviceToHost));
+    check(cudaMemcpy(got.data(), fd.d_in.get(), got.size() * sizeof(float), cudaMemcpyDeviceToHost));
     return got;
 }
 
@@ -98,8 +98,8 @@ TEST_F(WithEngine, NppPreprocessMatchesCpuPreprocess)
         const cv::Mat frame = noise(c.frame, seed++);
         const std::vector<float> got = npp_input(*trt_, npp, frame, c.size);
 
-        FrameData cpu{};
-        cpu.frame = frame;
+        Frame cpu{};
+        cpu.image = frame;
         preprocess(cpu, c.size);
         ASSERT_EQ(cpu.blob.total() * cpu.blob.channels(), got.size());
         const float *want = cpu.blob.ptr<float>();
@@ -218,24 +218,22 @@ TEST_F(WithEngine, TensorRtAgreesWithOnnxOnCpu)
     std::vector<double> conf_diffs;
     for (int n = 0; n < 40; ++n)
     {
-        FrameData fd{};
-        ASSERT_TRUE(cap.read(fd.frame)) << "frame " << n;
+        Frame fd = make_frame(*trt_);
+        ASSERT_TRUE(cap.read(fd.image)) << "frame " << n;
         if (n % 4 != 0)
             continue;
 
-        preprocess_npp(fd, cfg.input_size, npp, *trt_);
-        const std::vector<int> out_shape(trt_->out_dims.d, trt_->out_dims.d + trt_->out_dims.nbDims);
-        fd.out.create(static_cast<int>(out_shape.size()), out_shape.data(), CV_32F);
+        preprocess_npp(fd, cfg.input_size, npp);
         infer(*trt_, fd, cfg);
-        const auto dets_trt = postprocess(fd.out, fd.num_kept, fd.lb, fd.frame.size(), cfg);
+        const auto dets_trt = postprocess(fd.out, fd.num_kept, fd.lb, fd.image.size(), cfg);
 
-        FrameData ref{};
-        ref.frame = fd.frame;
+        Frame ref{};
+        ref.image = fd.image;
         preprocess(ref, cfg.input_size);
         net.setInput(ref.blob);
         const cv::Mat out_cpu = net.forward();
         ASSERT_EQ(out_cpu.dims, 3);
-        const auto dets_cpu = postprocess(out_cpu, out_cpu.size[1], ref.lb, ref.frame.size(), cfg);
+        const auto dets_cpu = postprocess(out_cpu, out_cpu.size[1], ref.lb, ref.image.size(), cfg);
 
         const Matches a = match(dets_trt, dets_cpu), b = match(dets_cpu, dets_trt);
         total_trt += static_cast<int>(dets_trt.size()), total_cpu += static_cast<int>(dets_cpu.size());
