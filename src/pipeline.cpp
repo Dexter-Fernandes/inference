@@ -23,9 +23,9 @@ std::vector<Frame> make_frames(const Trt &trt, int n)
 
 // Runs work under an NVTX range and tm, restarting tm at the warmup frame, and returns tm's average.
 template <class Work>
-double timed(cv::TickMeter &tm, const Frame &f, const char *range, Work &&work)
+double timed(cv::TickMeter &tm, int frame_id, const char *range, Work &&work)
 {
-    if (f.id == kWarmupFrame)
+    if (frame_id == kWarmupFrame)
         tm.reset();
     nvtx3::scoped_range r{range};
     tm.start();
@@ -100,26 +100,29 @@ void Pipeline::run_capture(std::stop_token graceful, Queue &out)
 {
     const std::stop_token abort = abort_.get_token();
     cv::TickMeter tm;
-    cv::Mat scratch; // a live frame with no pooled frame free is read here and dropped
+    cv::Mat scratch; // every frame is read here, then swapped into a pooled frame
     for (int id = 1; !graceful.stop_requested();)
     {
-        // A file waits for a free frame. A camera keeps reading so the next frame is current.
-        FramePtr f = cap_.is_camera() ? pool_.try_acquire() : pool_.acquire(abort);
-        if (abort.stop_requested())
+        // A file waits for a free frame before reading. A camera reads first and takes a frame only
+        // if one is free: no pooled frame sits idle through the camera's frame period, and a frame
+        // read while all are busy is dropped so the next one is current.
+        FramePtr f;
+        if (!cap_.is_camera() && !(f = pool_.acquire(abort)))
             return;
-        if (!f)
+        bool ok = false;
+        const double read_ms = timed(tm, id, "read", [&] { ok = cap_.read(scratch); });
+        if (!ok)
+            break;
+        const Clock::time_point captured = Clock::now();
+        if (!f && !(f = pool_.try_acquire()))
         {
-            if (!cap_.read(scratch))
-                break;
             ++dropped_;
             continue;
         }
+        std::swap(f->image, scratch);
         f->id = id;
-        bool ok = false;
-        f->stage_ms.read = timed(tm, *f, "read", [&] { ok = cap_.read(f->image); });
-        if (!ok)
-            break;
-        f->captured = Clock::now();
+        f->stage_ms.read = read_ms;
+        f->captured = captured;
         if (!out.push(std::move(f), abort))
             return;
         ++id;
@@ -136,7 +139,7 @@ void Pipeline::run_preprocess(Queue &in, Queue &out)
     while (auto f = in.pop(abort))
     {
         Frame &fr = **f;
-        fr.stage_ms.pre = timed(tm, fr, "pre", [&] {
+        fr.stage_ms.pre = timed(tm, fr.id, "pre", [&] {
             if (use_npp_)
                 preprocess_npp(fr, cfg_.input_size, npp);
             else
@@ -155,7 +158,7 @@ void Pipeline::run_infer(Queue &in, Queue &out)
     while (auto f = in.pop(abort))
     {
         Frame &fr = **f;
-        fr.stage_ms.infer = timed(tm, fr, "infer", [&] { infer(trt_, fr, cfg_); });
+        fr.stage_ms.infer = timed(tm, fr.id, "infer", [&] { infer(trt_, fr, cfg_); });
         if (!out.push(std::move(*f), abort))
             return;
     }
@@ -171,7 +174,7 @@ void Pipeline::run_post(Queue &in, Queue &out)
     while (auto f = in.pop(abort))
     {
         Frame &fr = **f;
-        fr.stage_ms.post = timed(post_tm, fr, "post", [&] { postprocess_stage(fr, cfg_); });
+        fr.stage_ms.post = timed(post_tm, fr.id, "post", [&] { postprocess_stage(fr, cfg_); });
 
         const Clock::time_point now = Clock::now();
         if (last != Clock::time_point{})
@@ -181,7 +184,7 @@ void Pipeline::run_post(Queue &in, Queue &out)
         }
         last = now;
 
-        fr.stage_ms.render = timed(render_tm, fr, "render", [&] { render(fr, names_, fps_ema); });
+        fr.stage_ms.render = timed(render_tm, fr.id, "render", [&] { render(fr, names_, fps_ema); });
         if (!out.push(std::move(*f), abort))
             return;
     }

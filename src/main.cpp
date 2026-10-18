@@ -124,7 +124,8 @@ int run(int argc, char **argv)
         if (f.id >= kWarmupFrame)
         {
             measure_end = now;
-            latency_ms.push_back(std::chrono::duration<double, std::milli>(now - f.captured).count());
+            if (json_out) // 8 bytes a frame, only for the report
+                latency_ms.push_back(std::chrono::duration<double, std::milli>(now - f.captured).count());
         }
 
         if (f.id % 100 == 0)
