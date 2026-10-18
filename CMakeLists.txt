@@ -26,7 +26,12 @@ FetchContent_Declare(nvtx
     GIT_TAG v3.1.0
     GIT_SHALLOW TRUE
     SOURCE_SUBDIR c)
-FetchContent_MakeAvailable(cli11 nvtx)
+FetchContent_Declare(googletest
+    GIT_REPOSITORY https://github.com/google/googletest.git
+    GIT_TAG v1.14.0
+    GIT_SHALLOW TRUE)
+set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(cli11 nvtx googletest)
 
 add_library(inference_core STATIC
     src/capture.cpp src/preprocess.cpp src/engine.cpp src/postprocess.cpp src/render.cpp src/filter.cu)
@@ -36,3 +41,16 @@ target_link_libraries(inference_core PUBLIC ${OpenCV_LIBS} nvtx3-cpp nvinfer
 
 add_executable(inference src/main.cpp)
 target_link_libraries(inference PRIVATE inference_core CLI11::CLI11)
+
+# unit_tests needs no GPU; gpu_tests needs the GPU plus assets/ (missing assets skip)
+enable_testing()
+include(GoogleTest)
+
+add_executable(unit_tests tests/test_letterbox.cpp tests/test_postprocess.cpp)
+target_link_libraries(unit_tests PRIVATE inference_core GTest::gtest_main)
+gtest_discover_tests(unit_tests DISCOVERY_MODE PRE_TEST)
+
+add_executable(gpu_tests tests/test_gpu.cpp)
+target_link_libraries(gpu_tests PRIVATE inference_core GTest::gtest_main)
+target_compile_definitions(gpu_tests PRIVATE ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+gtest_discover_tests(gpu_tests DISCOVERY_MODE PRE_TEST PROPERTIES LABELS gpu)
