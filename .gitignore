@@ -1,6 +1,7 @@
 t
 t.cpp
 build/
+build-trt/
 assets/*
 .vscode/
 heaptrack.*.zst

@@ -10,19 +10,22 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE RelWithDebInfo)
 endif()
 
-set(CUDA_TOOLKIT_ROOT_DIR "/usr/local/cuda-12.9")
-set(CUDAToolkit_ROOT "/usr/local/cuda-12.9")
+# Built inside the TensorRT container (see Dockerfile / compose.yaml)
 find_package(CUDAToolkit REQUIRED)
-list(PREPEND CMAKE_PREFIX_PATH "$ENV{HOME}/.local/opencv-cuda")
-cmake_policy(SET CMP0146 OLD)
 find_package(OpenCV REQUIRED)
 
 include(FetchContent)
 FetchContent_Declare(cli11
     GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
     GIT_TAG v2.7.2)
-FetchContent_MakeAvailable(cli11)
+# CUDA 12.1 ships only the NVTX C headers, not nvtx3.hpp
+FetchContent_Declare(nvtx
+    GIT_REPOSITORY https://github.com/NVIDIA/NVTX.git
+    GIT_TAG v3.1.0
+    GIT_SHALLOW TRUE
+    SOURCE_SUBDIR c)
+FetchContent_MakeAvailable(cli11 nvtx)
 
 add_executable(inference main.cpp)
-target_link_libraries(inference PRIVATE ${OpenCV_LIBS} CLI11::CLI11
-    CUDA::cudart CUDA::nppc CUDA::nppig CUDA::nppidei CUDA::nppial)
+target_link_libraries(inference PRIVATE ${OpenCV_LIBS} CLI11::CLI11 nvtx3-cpp nvinfer
+    CUDA::cudart CUDA::nppc CUDA::nppidei CUDA::nppial)

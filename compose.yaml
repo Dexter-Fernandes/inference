@@ -1,0 +1,15 @@
+services:
+  trt:
+    build: .
+    image: inference-trt
+    gpus: all
+    user: "1000:1000"
+    group_add: ["44"] # host video group, for /dev/video0
+    environment:
+      - DISPLAY
+      - HOME=/tmp
+    volumes:
+      - .:/work
+      - /tmp/.X11-unix:/tmp/.X11-unix
+    devices:
+      - /dev/video0:/dev/video0

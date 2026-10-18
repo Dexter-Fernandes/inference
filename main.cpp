@@ -3,10 +3,13 @@
 #include <CLI/CLI.hpp>
 #include <cuda_runtime.h>
 #include <npp.h>
+#include <NvInfer.h>
 
 #include <algorithm>
 #include <fstream>
 #include <iostream>
+#include <iterator>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <cmath>
@@ -92,73 +95,138 @@ void check(cudaError_t e)
         throw std::runtime_error(std::string("CUDA error: ") + cudaGetErrorString(e));
 }
 
+struct TrtLogger : nvinfer1::ILogger
+{
+    void log(Severity severity, const char *msg) noexcept override
+    {
+        if (severity <= Severity::kWARNING)
+            std::cerr << "[TRT] " << msg << "\n";
+    }
+};
+
+size_t volume(const nvinfer1::Dims &d)
+{
+    size_t v = 1;
+    for (int i = 0; i < d.nbDims; ++i)
+        v *= d.d[i];
+    return v;
+}
+
+// Owns the engine, one input and one output device buffer, and the stream everything runs on.
+struct Trt
+{
+    TrtLogger logger;
+    std::unique_ptr<nvinfer1::IRuntime> runtime;
+    std::unique_ptr<nvinfer1::ICudaEngine> engine;
+    std::unique_ptr<nvinfer1::IExecutionContext> context;
+    cudaStream_t stream = nullptr;
+    float *d_in = nullptr, *d_out = nullptr;
+    nvinfer1::Dims in_dims{}, out_dims{};
+
+    explicit Trt(const std::string &engine_path)
+    {
+        std::ifstream f(engine_path, std::ios::binary);
+        if (!f)
+            throw std::runtime_error("cannot open engine " + engine_path);
+        const std::vector<char> blob((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+
+        runtime.reset(nvinfer1::createInferRuntime(logger));
+        engine.reset(runtime->deserializeCudaEngine(blob.data(), blob.size()));
+        if (!engine)
+            throw std::runtime_error("failed to deserialize engine " + engine_path);
+        context.reset(engine->createExecutionContext());
+        check(cudaStreamCreate(&stream));
+
+        if (engine->getNbIOTensors() != 2)
+            throw std::runtime_error("expected 1 input and 1 output tensor");
+        for (int i = 0; i < engine->getNbIOTensors(); ++i)
+        {
+            const char *name = engine->getIOTensorName(i);
+            if (engine->getTensorDataType(name) != nvinfer1::DataType::kFLOAT)
+                throw std::runtime_error(std::string("tensor ") + name + " is not float32");
+            const bool is_input = engine->getTensorIOMode(name) == nvinfer1::TensorIOMode::kINPUT;
+            const nvinfer1::Dims d = engine->getTensorShape(name);
+            float *&buf = is_input ? d_in : d_out;
+            (is_input ? in_dims : out_dims) = d;
+            check(cudaMalloc(&buf, volume(d) * sizeof(float)));
+            context->setTensorAddress(name, buf);
+        }
+    }
+
+    ~Trt()
+    {
+        cudaFree(d_in);
+        cudaFree(d_out);
+        cudaStreamDestroy(stream);
+    }
+    Trt(const Trt &) = delete;
+    Trt &operator=(const Trt &) = delete;
+};
+
 struct NppPre
 {
     NppStreamContext ctx{};
-    cv::Size src_size;
     int size = 0;
-    Npp8u *d_src = nullptr, *d_resized = nullptr, *d_box = nullptr;
-    Npp32f *d_f32 = nullptr, *d_blob = nullptr;
+    cv::Mat resized; // host, reused across frames
+    Npp8u *d_resized = nullptr, *d_box = nullptr;
+    Npp32f *d_f32 = nullptr;
 
-    NppPre() { check(nppGetStreamContext(&ctx)); }
+    explicit NppPre(cudaStream_t stream)
+    {
+        check(nppGetStreamContext(&ctx));
+        ctx.hStream = stream;
+        check(cudaStreamGetFlags(stream, &ctx.nStreamFlags));
+    }
     ~NppPre() { release(); }
     NppPre(const NppPre &) = delete;
     NppPre &operator=(const NppPre &) = delete;
 
     void release()
     {
-        for (void *p : {(void *)d_src, (void *)d_resized, (void *)d_box, (void *)d_f32, (void *)d_blob})
+        for (void *p : {(void *)d_resized, (void *)d_box, (void *)d_f32})
             cudaFree(p);
-        d_src = d_resized = d_box = nullptr;
-        d_f32 = d_blob = nullptr;
+        d_resized = d_box = nullptr;
+        d_f32 = nullptr;
     }
 
-    // No-op unless the frame or input size changes, so in practice runs once.
-    void ensure(cv::Size src, int sz)
+    // No-op unless the input size changes, so in practice runs once.
+    void ensure(int sz)
     {
-        if (src == src_size && sz == size)
+        if (sz == size)
             return;
         release();
-        src_size = src;
         size = sz;
-        const size_t src_bytes = static_cast<size_t>(src.area()) * 3;
         const size_t box_px = static_cast<size_t>(sz) * sz;
-        check(cudaMalloc(&d_src, src_bytes));
         check(cudaMalloc(&d_resized, box_px * 3)); // resized fits inside the box
         check(cudaMalloc(&d_box, box_px * 3));
         check(cudaMalloc(&d_f32, box_px * 3 * sizeof(Npp32f)));
-        check(cudaMalloc(&d_blob, box_px * 3 * sizeof(Npp32f)));
     }
 };
 
-void preprocess_npp(FrameData &framedata, int size, NppPre &npp)
+// Resize on the CPU, upload the small image, then pad/convert/normalise on the GPU
+// straight into the engine's input buffer.
+void preprocess_npp(FrameData &framedata, int size, NppPre &npp, Trt &trt)
 {
-    const cv::Mat &src = framedata.frame;
     LetterboxInfo &lb = framedata.lb;
-    const cv::Size rs = letterbox_info(src.size(), size, lb);
+    const cv::Size rs = letterbox_info(framedata.frame.size(), size, lb);
     const int nw = rs.width, nh = rs.height;
 
-    npp.ensure(src.size(), size);
-    const int src_step = src.cols * 3;
+    npp.ensure(size);
     const int rs_step = nw * 3;
     const int box_step = size * 3;
     const int f32_step = size * 3 * sizeof(Npp32f);
     const NppiSize box_sz{size, size};
 
+    cv::resize(framedata.frame, npp.resized, rs, 0, 0, cv::INTER_LINEAR);
+
     {
         nvtx3::scoped_range r{"h2d"};
-        check(cudaMemcpy2D(npp.d_src, src_step, src.data, src.step, src_step, src.rows, cudaMemcpyHostToDevice));
+        check(cudaMemcpy2DAsync(npp.d_resized, rs_step, npp.resized.data, npp.resized.step, rs_step, nh,
+                                cudaMemcpyHostToDevice, trt.stream));
     }
 
     {
         nvtx3::scoped_range r{"npp"};
-        // Not nppiResize: its LINEAR uses a different pixel-centre mapping and degrades to nearest
-        // on integer downscales. SqrPixel with zero shift matches cv::resize INTER_LINEAR.
-        check(nppiResizeSqrPixel_8u_C3R_Ctx(npp.d_src, {src.cols, src.rows}, src_step, {0, 0, src.cols, src.rows},
-                                            npp.d_resized, rs_step, {0, 0, nw, nh},
-                                            nw / static_cast<double>(src.cols), nh / static_cast<double>(src.rows),
-                                            0.0, 0.0, NPPI_INTER_LINEAR, npp.ctx));
-
         const Npp8u pad[3] = {114, 114, 114};
         check(nppiCopyConstBorder_8u_C3R_Ctx(npp.d_resized, rs_step, {nw, nh},
                                              npp.d_box, box_step, box_sz, lb.pad_y, lb.pad_x, pad, npp.ctx));
@@ -173,24 +241,28 @@ void preprocess_npp(FrameData &framedata, int size, NppPre &npp)
 
         // HWC -> NCHW
         const size_t plane = static_cast<size_t>(size) * size;
-        Npp32f *const planes[3] = {npp.d_blob, npp.d_blob + plane, npp.d_blob + 2 * plane};
+        Npp32f *const planes[3] = {trt.d_in, trt.d_in + plane, trt.d_in + 2 * plane};
         check(nppiCopy_32f_C3P3R_Ctx(npp.d_f32, f32_step, planes, size * sizeof(Npp32f), box_sz, npp.ctx));
-    }
 
-    {
-        nvtx3::scoped_range r{"d2h"};
-        const int dims[4] = {1, 3, size, size};
-        framedata.blob.create(4, dims, CV_32F);
-        // Blocking copy on the default stream, so it also waits for the NPP work.
-        check(cudaMemcpy(framedata.blob.data, npp.d_blob, 3 * static_cast<size_t>(size) * size * sizeof(float),
-                         cudaMemcpyDeviceToHost));
+        check(cudaStreamSynchronize(trt.stream)); // so t.pre includes the GPU work
     }
 }
 
-void infer(cv::dnn::Net &net, FrameData &framedata)
+void preprocess_cpu(FrameData &framedata, int size, Trt &trt)
 {
-    net.setInput(framedata.blob);
-    framedata.out = net.forward().clone();
+    preprocess(framedata, size);
+    check(cudaMemcpyAsync(trt.d_in, framedata.blob.data, framedata.blob.total() * sizeof(float),
+                          cudaMemcpyHostToDevice, trt.stream));
+    check(cudaStreamSynchronize(trt.stream));
+}
+
+void infer(Trt &trt, FrameData &framedata)
+{
+    if (!trt.context->enqueueV3(trt.stream))
+        throw std::runtime_error("enqueueV3 failed");
+    check(cudaMemcpyAsync(framedata.out.data, trt.d_out, framedata.out.total() * sizeof(float),
+                          cudaMemcpyDeviceToHost, trt.stream));
+    check(cudaStreamSynchronize(trt.stream));
 }
 
 std::vector<Detection> postprocess(const cv::Mat &out, const LetterboxInfo &lb, const cv::Size &orig, const Config &cfg)
@@ -303,44 +375,31 @@ int main(int argc, char **argv)
     CLI::App app("Runs an object detection on a video or webcam");
     argv = app.ensure_utf8(argv);
 
-    std::string model_path = "assets/yolov5s.onnx";
-    app.add_option("-m,--model_path", model_path, "Path to the model.onnx");
+    std::string model_path = "assets/yolov5s.engine";
+    app.add_option("-m,--model_path", model_path, "Path to the TensorRT engine");
 
     std::string source = "0";
     app.add_option("-s,--source", source, "Source");
 
-    Config config;
-    app.add_option("-i,--input_size", config.input_size, "Model input size (must match the exported model)");
-
     bool use_npp = true;
     app.add_flag("--npp,!--no-npp", use_npp, "Preprocess on GPU with NPP");
 
-    bool use_cpu = false;
-    app.add_flag("--cpu", use_cpu, "Run inference on the CPU (cv::dnn OpenCV backend)");
-
     CLI11_PARSE(app, argc, argv);
 
-    cv::dnn::Net net;
+    std::unique_ptr<Trt> trt;
     try
     {
-        net = cv::dnn::readNetFromONNX(model_path);
+        trt = std::make_unique<Trt>(model_path);
     }
-    catch (const cv::Exception &e)
+    catch (const std::exception &e)
     {
-        std::cerr << "Failed to load model " << model_path << ":\n"
-                  << e.what() << "\n";
+        std::cerr << "Failed to load engine " << model_path << ": " << e.what() << "\n"
+                  << "Build one with: trtexec --onnx=assets/yolov5s.onnx --saveEngine=" << model_path << "\n";
         return 1;
     }
-    if (use_cpu)
-    {
-        net.setPreferableBackend(cv::dnn::DNN_BACKEND_OPENCV);
-        net.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
-    }
-    else
-    {
-        net.setPreferableBackend(cv::dnn::DNN_BACKEND_CUDA);
-        net.setPreferableTarget(cv::dnn::DNN_TARGET_CUDA);
-    }
+
+    Config config;
+    config.input_size = trt->in_dims.d[2]; // NCHW, square
 
     cv::VideoCapture cap;
     // is_camera if source only contains numbers
@@ -357,7 +416,8 @@ int main(int argc, char **argv)
     }
 
     FrameData fd{};
-    NppPre npp;
+    fd.out.create(trt->out_dims.nbDims, std::vector<int>(trt->out_dims.d, trt->out_dims.d + trt->out_dims.nbDims).data(), CV_32F);
+    NppPre npp(trt->stream);
 
     std::vector<std::string> names; // empty is fine: draw() falls back to class ids
     {
@@ -396,16 +456,16 @@ int main(int argc, char **argv)
             nvtx3::scoped_range r{"pre"};
             t.pre.start();
             if (use_npp)
-                preprocess_npp(fd, config.input_size, npp);
+                preprocess_npp(fd, config.input_size, npp, *trt);
             else
-                preprocess(fd, config.input_size);
+                preprocess_cpu(fd, config.input_size, *trt);
             t.pre.stop();
         }
 
         {
             nvtx3::scoped_range r{"infer"};
             t.infer.start();
-            infer(net, fd);
+            infer(*trt, fd);
             t.infer.stop();
         }
 
