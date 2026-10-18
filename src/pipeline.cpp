@@ -35,8 +35,8 @@ double timed(cv::TickMeter &tm, const Frame &f, const char *range, Work &&work)
 }
 } // namespace
 
-Pipeline::Pipeline(Trt &trt, Capture &cap, const Config &cfg, bool use_npp, std::vector<std::string> names)
-    : trt_(trt), cap_(cap), cfg_(cfg), use_npp_(use_npp), names_(std::move(names)), pool_(make_frames(trt, kPoolSize))
+Pipeline::Pipeline(Trt &trt, Capture &cap, const Config &cfg, bool use_npp, std::vector<std::string> names, int pool_size)
+    : trt_(trt), cap_(cap), cfg_(cfg), use_npp_(use_npp), names_(std::move(names)), pool_size_(pool_size), pool_(make_frames(trt, pool_size))
 {
 }
 
@@ -44,7 +44,7 @@ void Pipeline::run(const std::function<bool(Frame &)> &sink)
 {
     const std::stop_token abort = abort_.get_token();
     // Each queue can hold every pooled frame, so pushes never wait; the pool is the only brake.
-    Queue captured(kPoolSize), preprocessed(kPoolSize), inferred(kPoolSize), done(kPoolSize);
+    Queue captured(pool_size_), preprocessed(pool_size_), inferred(pool_size_), done(pool_size_);
 
     // Records an exception and aborts the run, so no thread is left waiting on a dead one.
     auto guarded = [this](auto body) {

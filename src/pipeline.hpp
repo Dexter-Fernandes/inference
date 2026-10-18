@@ -22,10 +22,9 @@ constexpr int kWarmupFrame = 10; // each stage resets its timer when this frame 
 class Pipeline
 {
 public:
-    static constexpr int kPoolSize = 4;
-
-    // Allocates the frame pool. From run() on, only the stage threads touch trt and cap.
-    Pipeline(Trt &trt, Capture &cap, const Config &cfg, bool use_npp, std::vector<std::string> names);
+    // Allocates pool_size frames, which bounds the frames in flight and so the latency. From run()
+    // on, only the stage threads touch trt and cap.
+    Pipeline(Trt &trt, Capture &cap, const Config &cfg, bool use_npp, std::vector<std::string> names, int pool_size = 2);
 
     // Call once. Calls sink for every frame in capture order. When sink returns false, capture
     // stops and frames still in flight are drained without reaching sink. Returns after every
@@ -50,6 +49,7 @@ private:
     const Config cfg_;
     const bool use_npp_;
     const std::vector<std::string> names_;
+    const int pool_size_;
 
     Pool<Frame> pool_; // outlives run()'s threads and queues, so every handle comes back
     std::stop_source abort_;

@@ -63,6 +63,11 @@ int run(int argc, char **argv)
     app.add_option("--frames", max_frames, "Stop after N frames (default: unlimited)")
         ->check(CLI::PositiveNumber);
 
+    int pool_size = 2;
+    app.add_option("--pool", pool_size, "Frames in flight; each one adds about one inference time of latency")
+        ->check(CLI::Range(2, 16))
+        ->capture_default_str();
+
     bool headless = false;
     app.add_flag("--headless", headless, "No window; nothing touches highgui");
 
@@ -97,7 +102,7 @@ int run(int argc, char **argv)
             names.push_back(line);
     }
 
-    Pipeline pipeline(trt, cap, config, use_npp, std::move(names));
+    Pipeline pipeline(trt, cap, config, use_npp, std::move(names), pool_size);
     install_signal_handlers();
 
     using Clock = std::chrono::steady_clock;

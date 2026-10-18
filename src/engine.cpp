@@ -86,6 +86,9 @@ void infer(Trt &trt, Frame &frame, const Config &cfg)
     }
     {
         nvtx3::scoped_range r{"d2h"};
+        // Wait for the engine before queueing the download. The 940MX has one copy engine, so a
+        // download queued behind ~36 ms of inference would hold up the preprocess thread's upload.
+        check(cudaStreamSynchronize(trt.stream.get()));
         check(cudaMemcpyAsync(&frame.num_kept, trt.d_count.get(), sizeof(int), cudaMemcpyDeviceToHost, trt.stream.get()));
         check(cudaStreamSynchronize(trt.stream.get()));
         check(cudaMemcpyAsync(frame.out.data, trt.d_kept.get(), static_cast<size_t>(frame.num_kept) * stride * sizeof(float),
