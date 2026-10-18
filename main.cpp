@@ -1,10 +1,13 @@
 #include <nvtx3/nvtx3.hpp>
 #include <opencv2/opencv.hpp>
 #include <CLI/CLI.hpp>
+#include <cuda_runtime.h>
+#include <npp.h>
 
 #include <algorithm>
 #include <fstream>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <cmath>
 #include <set>
@@ -45,16 +48,24 @@ struct StageTimers
     cv::TickMeter read, pre, infer, post, render;
 };
 
-void letterbox(const cv::Mat &src, cv::Mat &resized, cv::Mat &out, int size, LetterboxInfo &lb)
+// Fills lb and returns the resized (unpadded) size.
+cv::Size letterbox_info(cv::Size src, int size, LetterboxInfo &lb)
 {
-    lb.scale = std::min(size / static_cast<float>(src.cols),
-                        size / static_cast<float>(src.rows));
-    const int nw = static_cast<int>(std::round(src.cols * lb.scale));
-    const int nh = static_cast<int>(std::round(src.rows * lb.scale));
+    lb.scale = std::min(size / static_cast<float>(src.width),
+                        size / static_cast<float>(src.height));
+    const int nw = static_cast<int>(std::round(src.width * lb.scale));
+    const int nh = static_cast<int>(std::round(src.height * lb.scale));
     lb.pad_x = (size - nw) / 2;
     lb.pad_y = (size - nh) / 2;
+    return {nw, nh};
+}
 
-    cv::resize(src, resized, {nw, nh}, 0, 0, cv::INTER_LINEAR);
+void letterbox(const cv::Mat &src, cv::Mat &resized, cv::Mat &out, int size, LetterboxInfo &lb)
+{
+    const cv::Size rs = letterbox_info(src.size(), size, lb);
+    const int nw = rs.width, nh = rs.height;
+
+    cv::resize(src, resized, rs, 0, 0, cv::INTER_LINEAR);
 
     out.create(size, size, src.type()); // no-op after the first frame if size and type match
     out.setTo(cv::Scalar::all(114));    // memset, no allocation
@@ -67,6 +78,113 @@ void preprocess(FrameData &framedata, int size)
 
     letterbox(framedata.frame, resized, letterboxed, size, framedata.lb);
     cv::dnn::blobFromImage(letterboxed, framedata.blob, 1.0 / 255.0, {size, size}, cv::Scalar(), /*swapRB=*/true, /*crop=*/false);
+}
+
+void check(NppStatus s)
+{
+    if (s < NPP_SUCCESS)
+        throw std::runtime_error("NPP error " + std::to_string(s));
+}
+
+void check(cudaError_t e)
+{
+    if (e != cudaSuccess)
+        throw std::runtime_error(std::string("CUDA error: ") + cudaGetErrorString(e));
+}
+
+struct NppPre
+{
+    NppStreamContext ctx{};
+    cv::Size src_size;
+    int size = 0;
+    Npp8u *d_src = nullptr, *d_resized = nullptr, *d_box = nullptr;
+    Npp32f *d_f32 = nullptr, *d_blob = nullptr;
+
+    NppPre() { check(nppGetStreamContext(&ctx)); }
+    ~NppPre() { release(); }
+    NppPre(const NppPre &) = delete;
+    NppPre &operator=(const NppPre &) = delete;
+
+    void release()
+    {
+        for (void *p : {(void *)d_src, (void *)d_resized, (void *)d_box, (void *)d_f32, (void *)d_blob})
+            cudaFree(p);
+        d_src = d_resized = d_box = nullptr;
+        d_f32 = d_blob = nullptr;
+    }
+
+    // No-op unless the frame or input size changes, so in practice runs once.
+    void ensure(cv::Size src, int sz)
+    {
+        if (src == src_size && sz == size)
+            return;
+        release();
+        src_size = src;
+        size = sz;
+        const size_t src_bytes = static_cast<size_t>(src.area()) * 3;
+        const size_t box_px = static_cast<size_t>(sz) * sz;
+        check(cudaMalloc(&d_src, src_bytes));
+        check(cudaMalloc(&d_resized, box_px * 3)); // resized fits inside the box
+        check(cudaMalloc(&d_box, box_px * 3));
+        check(cudaMalloc(&d_f32, box_px * 3 * sizeof(Npp32f)));
+        check(cudaMalloc(&d_blob, box_px * 3 * sizeof(Npp32f)));
+    }
+};
+
+void preprocess_npp(FrameData &framedata, int size, NppPre &npp)
+{
+    const cv::Mat &src = framedata.frame;
+    LetterboxInfo &lb = framedata.lb;
+    const cv::Size rs = letterbox_info(src.size(), size, lb);
+    const int nw = rs.width, nh = rs.height;
+
+    npp.ensure(src.size(), size);
+    const int src_step = src.cols * 3;
+    const int rs_step = nw * 3;
+    const int box_step = size * 3;
+    const int f32_step = size * 3 * sizeof(Npp32f);
+    const NppiSize box_sz{size, size};
+
+    {
+        nvtx3::scoped_range r{"h2d"};
+        check(cudaMemcpy2D(npp.d_src, src_step, src.data, src.step, src_step, src.rows, cudaMemcpyHostToDevice));
+    }
+
+    {
+        nvtx3::scoped_range r{"npp"};
+        // Not nppiResize: its LINEAR uses a different pixel-centre mapping and degrades to nearest
+        // on integer downscales. SqrPixel with zero shift matches cv::resize INTER_LINEAR.
+        check(nppiResizeSqrPixel_8u_C3R_Ctx(npp.d_src, {src.cols, src.rows}, src_step, {0, 0, src.cols, src.rows},
+                                            npp.d_resized, rs_step, {0, 0, nw, nh},
+                                            nw / static_cast<double>(src.cols), nh / static_cast<double>(src.rows),
+                                            0.0, 0.0, NPPI_INTER_LINEAR, npp.ctx));
+
+        const Npp8u pad[3] = {114, 114, 114};
+        check(nppiCopyConstBorder_8u_C3R_Ctx(npp.d_resized, rs_step, {nw, nh},
+                                             npp.d_box, box_step, box_sz, lb.pad_y, lb.pad_x, pad, npp.ctx));
+
+        const int bgr2rgb[3] = {2, 1, 0};
+        check(nppiSwapChannels_8u_C3IR_Ctx(npp.d_box, box_step, box_sz, bgr2rgb, npp.ctx));
+
+        check(nppiConvert_8u32f_C3R_Ctx(npp.d_box, box_step, npp.d_f32, f32_step, box_sz, npp.ctx));
+
+        const Npp32f inv255[3] = {1.f / 255.f, 1.f / 255.f, 1.f / 255.f};
+        check(nppiMulC_32f_C3IR_Ctx(inv255, npp.d_f32, f32_step, box_sz, npp.ctx));
+
+        // HWC -> NCHW
+        const size_t plane = static_cast<size_t>(size) * size;
+        Npp32f *const planes[3] = {npp.d_blob, npp.d_blob + plane, npp.d_blob + 2 * plane};
+        check(nppiCopy_32f_C3P3R_Ctx(npp.d_f32, f32_step, planes, size * sizeof(Npp32f), box_sz, npp.ctx));
+    }
+
+    {
+        nvtx3::scoped_range r{"d2h"};
+        const int dims[4] = {1, 3, size, size};
+        framedata.blob.create(4, dims, CV_32F);
+        // Blocking copy on the default stream, so it also waits for the NPP work.
+        check(cudaMemcpy(framedata.blob.data, npp.d_blob, 3 * static_cast<size_t>(size) * size * sizeof(float),
+                         cudaMemcpyDeviceToHost));
+    }
 }
 
 void infer(cv::dnn::Net &net, FrameData &framedata)
@@ -194,6 +312,9 @@ int main(int argc, char **argv)
     Config config;
     app.add_option("-i,--input_size", config.input_size, "Model input size (must match the exported model)");
 
+    bool use_npp = true;
+    app.add_flag("--npp", use_npp, "Preprocess on GPU with NPP");
+
     CLI11_PARSE(app, argc, argv);
 
     cv::dnn::Net net;
@@ -225,6 +346,7 @@ int main(int argc, char **argv)
     }
 
     FrameData fd{};
+    NppPre npp;
 
     std::vector<std::string> names; // empty is fine: draw() falls back to class ids
     {
@@ -262,7 +384,10 @@ int main(int argc, char **argv)
         {
             nvtx3::scoped_range r{"pre"};
             t.pre.start();
-            preprocess(fd, config.input_size);
+            if (use_npp)
+                preprocess_npp(fd, config.input_size, npp);
+            else
+                preprocess(fd, config.input_size);
             t.pre.stop();
         }
 
