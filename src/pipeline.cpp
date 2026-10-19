@@ -103,11 +103,11 @@ void Pipeline::run_capture(std::stop_token graceful, Queue &out)
     cv::Mat scratch; // every frame is read here, then swapped into a pooled frame
     for (int id = 1; !graceful.stop_requested();)
     {
-        // A file waits for a free frame before reading. A camera reads first and takes a frame only
-        // if one is free: no pooled frame sits idle through the camera's frame period, and a frame
-        // read while all are busy is dropped so the next one is current.
+        // A file waits for a free frame before reading. A live source reads first and takes a frame
+        // only if one is free: no pooled frame sits idle through the source's frame period, and a
+        // frame read while all are busy is dropped so the next one is current.
         FramePtr f;
-        if (!cap_.is_camera() && !(f = pool_.acquire(abort)))
+        if (!cap_.is_live() && !(f = pool_.acquire(abort)))
             return;
         bool ok = false;
         const double read_ms = timed(tm, id, "read", [&] { ok = cap_.read(scratch); });

@@ -16,6 +16,15 @@ TEST(IsCameraSource, DigitsOnly)
     EXPECT_FALSE(is_camera_source("rtsp://host/1"));
 }
 
+TEST(IsLiveSource, CamerasAndStreamUrls)
+{
+    EXPECT_TRUE(is_live_source("0"));
+    EXPECT_TRUE(is_live_source("rtsp://host/1"));
+    EXPECT_TRUE(is_live_source("udp://127.0.0.1:5000"));
+    EXPECT_FALSE(is_live_source(""));
+    EXPECT_FALSE(is_live_source("assets/test.mp4"));
+}
+
 TEST(Capture, MissingFileThrows)
 {
     EXPECT_THROW(Capture("/nonexistent/video.mp4"), std::runtime_error);
