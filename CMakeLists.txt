@@ -46,6 +46,10 @@ target_link_libraries(inference_core PRIVATE PkgConfig::LIBAV)
 add_executable(inference src/main.cpp)
 target_link_libraries(inference PRIVATE inference_core CLI11::CLI11)
 
+# Test source for live-URL input: streams a file over UDP at its own frame rate.
+add_executable(udp_send tools/udp_send.cpp)
+target_link_libraries(udp_send PRIVATE ${OpenCV_LIBS})
+
 # unit_tests needs no GPU; gpu_tests needs the GPU plus assets/ (missing assets skip).
 # tests/tsan.sh runs the queue and pool tests under ThreadSanitizer.
 enable_testing()
