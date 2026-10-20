@@ -66,10 +66,10 @@ int run(int argc, char **argv)
     app.add_option("--frames", max_frames, "Stop after N frames (default: unlimited)")
         ->check(CLI::PositiveNumber);
 
-    int pool_size = 3;
-    app.add_option("--pool", pool_size, "Frames in flight; each one adds about one inference time of latency")
-        ->check(CLI::Range(2, 16))
-        ->capture_default_str();
+    std::optional<int> pool_arg;
+    app.add_option("--pool", pool_arg,
+                   "Frames in flight; each one adds about one inference time of latency (default: 3 for a live source, 2 for a file)")
+        ->check(CLI::Range(2, 16));
 
     bool headless = false;
     app.add_flag("--headless", headless, "No window; nothing touches highgui");
@@ -124,6 +124,9 @@ int run(int argc, char **argv)
             names.push_back(line);
     }
 
+    // A live source needs the third frame to hold a fresh one beside the frames in infer and waiting; a file
+    // blocks, so a third frame would only add latency.
+    const int pool_size = pool_arg.value_or(cap.is_live() ? 3 : 2);
     Pipeline pipeline(trt, cap, config, use_npp, std::move(names), pool_size);
     install_signal_handlers();
 
