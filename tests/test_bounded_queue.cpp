@@ -39,6 +39,38 @@ TEST(BoundedQueue, TryPushFailsWhenFull)
     EXPECT_EQ(q.pop(ss.get_token()), 4);
 }
 
+TEST(BoundedQueue, PushLatestEvictsTheOldestWhenFull)
+{
+    BoundedQueue<int> q(2);
+    std::stop_source ss;
+    EXPECT_EQ(q.push_latest(1), std::nullopt);
+    EXPECT_EQ(q.push_latest(2), std::nullopt);
+    EXPECT_EQ(q.push_latest(3), 1);
+    EXPECT_EQ(q.push_latest(4), 2);
+    EXPECT_EQ(q.pop(ss.get_token()), 3);
+    EXPECT_EQ(q.pop(ss.get_token()), 4);
+}
+
+TEST(BoundedQueue, PushLatestOnAClosedQueueDropsTheItem)
+{
+    BoundedQueue<int> q(1);
+    std::stop_source ss;
+    q.close();
+    EXPECT_EQ(q.push_latest(1), std::nullopt);
+    EXPECT_EQ(q.pop(ss.get_token()), std::nullopt);
+}
+
+TEST(BoundedQueue, PushLatestWakesBlockedPop)
+{
+    BoundedQueue<int> q(1);
+    std::stop_source ss;
+    auto popped = std::async(std::launch::async, [&] { return q.pop(ss.get_token()); });
+    ASSERT_EQ(popped.wait_for(kBlocked), std::future_status::timeout);
+    q.push_latest(7);
+    ASSERT_EQ(popped.wait_for(kWoken), std::future_status::ready);
+    EXPECT_EQ(popped.get(), 7);
+}
+
 TEST(BoundedQueue, CloseDrainsThenPopsEmpty)
 {
     BoundedQueue<int> q(4);
@@ -88,6 +120,32 @@ TEST(BoundedQueue, StopWakesBlockedPushAndDropsItsItem)
     q.close();
     EXPECT_EQ(q.pop(other.get_token()), 1);
     EXPECT_EQ(q.pop(other.get_token()), std::nullopt);
+}
+
+TEST(BoundedQueue, PushLatestDeliversOrEvictsEachItemOnceAndKeepsOrder)
+{
+    constexpr int kItems = 50000;
+    BoundedQueue<int> q(1);
+    std::stop_source ss;
+    std::vector<int> delivered, evicted;
+    {
+        std::jthread consumer([&] {
+            while (auto v = q.pop(ss.get_token()))
+                delivered.push_back(*v);
+        });
+        for (int i = 0; i < kItems; ++i)
+            if (auto old = q.push_latest(i))
+                evicted.push_back(*old);
+        q.close();
+    }
+    EXPECT_TRUE(std::is_sorted(delivered.begin(), delivered.end()));
+    EXPECT_EQ(delivered.back(), kItems - 1) << "the newest item is never the one dropped";
+    std::vector<int> all = delivered;
+    all.insert(all.end(), evicted.begin(), evicted.end());
+    std::sort(all.begin(), all.end());
+    std::vector<int> expect(kItems);
+    std::iota(expect.begin(), expect.end(), 0);
+    EXPECT_EQ(all, expect);
 }
 
 TEST(BoundedQueue, ManyProducersAndConsumersDeliverEachItemOnce)

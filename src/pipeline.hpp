@@ -30,8 +30,9 @@ public:
     // stage thread has joined, rethrowing the first exception a stage or sink threw.
     void run(const std::function<bool(Frame &)> &sink);
 
-    // Live frames skipped because every pooled frame was in use. Read after run().
-    int dropped() const { return dropped_; }
+    // Live frames that never reached the sink: skipped because every pooled frame was in use, or
+    // replaced by a fresher one while waiting for infer. Read after run().
+    int dropped() const { return dropped_ + replaced_; }
 
 private:
     using FramePtr = std::shared_ptr<Frame>;
@@ -54,5 +55,6 @@ private:
     std::stop_source abort_;
     std::mutex error_mutex_;
     std::exception_ptr error_;
-    int dropped_ = 0; // capture thread only
+    int dropped_ = 0;  // capture thread only
+    int replaced_ = 0; // preprocess thread only
 };

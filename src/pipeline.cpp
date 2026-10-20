@@ -28,8 +28,9 @@ Pipeline::Pipeline(Trt &trt, Capture &cap, const Config &cfg, bool use_npp, std:
 void Pipeline::run(const std::function<bool(Frame &)> &sink)
 {
     const std::stop_token abort = abort_.get_token();
-    // Each queue can hold every pooled frame, so pushes never wait; the pool is the only brake.
-    Queue captured(pool_size_), preprocessed(pool_size_), inferred(pool_size_), done(pool_size_);
+    // Each queue can hold every pooled frame, so pushes never wait; the pool is the only brake. A live
+    // source keeps one preprocessed frame waiting for infer and replaces it with a fresher one.
+    Queue captured(pool_size_), preprocessed(cap_.is_live() ? 1 : pool_size_), inferred(pool_size_), done(pool_size_);
 
     // Records an exception and aborts the run, so no thread is left waiting on a dead one.
     auto guarded = [this](auto body) {
@@ -130,7 +131,12 @@ void Pipeline::run_preprocess(Queue &in, Queue &out)
             else
                 preprocess_cpu(fr, cfg_.input_size, stream.get());
         });
-        if (!out.push(std::move(*f), abort))
+        if (cap_.is_live())
+        {
+            if (out.push_latest(std::move(*f))) // the evicted frame goes back to the pool here
+                ++replaced_;
+        }
+        else if (!out.push(std::move(*f), abort))
             return;
     }
     out.close();
@@ -140,9 +146,11 @@ void Pipeline::run_infer(Queue &in, Queue &out)
 {
     const std::stop_token abort = abort_.get_token();
     cv::TickMeter tm;
+    int seq = 0; // renumbered here: the frames replaced before infer leave gaps in the capture ids
     while (auto f = in.pop(abort))
     {
         Frame &fr = **f;
+        fr.id = ++seq;
         fr.stage_ms.infer = timed(tm, fr.id, "infer", [&] { infer(trt_, fr, cfg_); });
         if (!out.push(std::move(*f), abort))
             return;

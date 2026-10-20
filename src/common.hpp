@@ -40,7 +40,7 @@ struct StageMs
 // and reused, so a frame owns its engine input and nothing is shared between frames in flight.
 struct Frame
 {
-    int id = 0; // 1-based capture order
+    int id = 0; // 1-based: capture order until infer renumbers it to the order frames reach the sink
     std::chrono::steady_clock::time_point captured;
     cv::Mat image; // original, drawn on at the end
     LetterboxInfo lb{};

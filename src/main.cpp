@@ -66,7 +66,7 @@ int run(int argc, char **argv)
     app.add_option("--frames", max_frames, "Stop after N frames (default: unlimited)")
         ->check(CLI::PositiveNumber);
 
-    int pool_size = 2;
+    int pool_size = 3;
     app.add_option("--pool", pool_size, "Frames in flight; each one adds about one inference time of latency")
         ->check(CLI::Range(2, 16))
         ->capture_default_str();

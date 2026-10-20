@@ -41,6 +41,26 @@ public:
         return true;
     }
 
+    // Never blocks. When full, the oldest item makes room and is returned. Empty if nothing was
+    // evicted, or if the queue is closed (v is dropped).
+    std::optional<T> push_latest(T v)
+    {
+        std::optional<T> evicted;
+        {
+            std::lock_guard lk(m_);
+            if (closed_)
+                return std::nullopt;
+            if (q_.size() >= capacity_)
+            {
+                evicted.emplace(std::move(q_.front()));
+                q_.pop_front();
+            }
+            q_.push_back(std::move(v));
+        }
+        cv_.notify_all();
+        return evicted;
+    }
+
     // Blocks while empty. Empty once stop is requested, or once the queue is closed and drained.
     std::optional<T> pop(std::stop_token st)
     {
