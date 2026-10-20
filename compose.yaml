@@ -13,3 +13,20 @@ services:
       - /tmp/.X11-unix:/tmp/.X11-unix
     devices:
       - /dev/video0:/dev/video0
+
+  # Fake live cameras for the dropped-frame check; not started by `docker compose run trt`. Start one at a time,
+  # they share the CPU with the pipeline: docker compose --profile rtsp up -d cam60, then -s rtsp://cam60:8554/cam
+  cam60: &cam
+    image: bluenviron/mediamtx:latest-ffmpeg
+    profiles: ["rtsp"]
+    volumes:
+      - ./assets:/media:ro
+    environment:
+      - MTX_PATHS_CAM_RUNONINIT=ffmpeg -re -stream_loop -1 -i /media/test.mp4 -an -c copy -f rtsp -rtsp_transport tcp rtsp://localhost:$$RTSP_PORT/$$MTX_PATH
+      - MTX_PATHS_CAM_RUNONINITRESTART=yes
+
+  cam20:
+    <<: *cam
+    environment:
+      - MTX_PATHS_CAM_RUNONINIT=ffmpeg -re -stream_loop -1 -i /media/test.mp4 -an -vf fps=20 -c:v libx264 -preset ultrafast -threads 1 -g 20 -f rtsp -rtsp_transport tcp rtsp://localhost:$$RTSP_PORT/$$MTX_PATH
+      - MTX_PATHS_CAM_RUNONINITRESTART=yes
