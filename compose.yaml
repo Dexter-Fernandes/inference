@@ -4,6 +4,7 @@ services:
     image: inference-trt
     gpus: all
     user: "1000:1000"
+    ipc: host # /dev/shm is the host's, shared with det_sub
     group_add: ["44"] # host video group, for /dev/video0
     environment:
       - DISPLAY
@@ -13,6 +14,17 @@ services:
       - /tmp/.X11-unix:/tmp/.X11-unix
     devices:
       - /dev/video0:/dev/video0
+
+  # Reads what `inference --publish` puts in the host's /dev/shm:
+  # docker compose --profile ipc run --rm det_sub ./build-trt/det_sub
+  det_sub:
+    image: inference-trt
+    profiles: ["ipc"]
+    user: "1000:1000"
+    ipc: host
+    volumes:
+      - .:/work
+    working_dir: /work
 
   # Fake live cameras for the dropped-frame check; not started by `docker compose run trt`. Start one at a time,
   # they share the CPU with the pipeline: docker compose --profile rtsp up -d cam60, then -s rtsp://cam60:8554/cam

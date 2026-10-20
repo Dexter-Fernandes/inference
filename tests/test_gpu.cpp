@@ -1,4 +1,5 @@
 #include "capture.hpp"
+#include "det_ring.hpp"
 #include "engine.hpp"
 #include "filter.hpp"
 #include "pipeline.hpp"
@@ -8,6 +9,8 @@
 #include <gtest/gtest.h>
 #include <opencv2/dnn.hpp>
 #include <opencv2/videoio.hpp>
+
+#include <unistd.h>
 
 #include <algorithm>
 #include <cmath>
@@ -337,5 +340,43 @@ TEST_F(WithEngine, PipelineRethrowsASinkExceptionAfterJoining)
     }),
                  std::runtime_error);
     EXPECT_EQ(seen, 5);
+}
+
+TEST_F(WithEngine, PipelinePublishesTheDetectionsTheSinkReceives)
+{
+    const std::string video = kAssets + "/test.mp4";
+    REQUIRE_ASSET(video);
+    Config cfg;
+    cfg.input_size = trt_->in_dims.d[2];
+    const std::string name = "/det_ring_gpu_test_" + std::to_string(getpid()) + "_" +
+                             std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    DetWriter writer(name);
+    DetReader reader(name);
+    Capture cap(video);
+    Pipeline pipeline(*trt_, cap, cfg, /*use_npp=*/true, {}, 2, &writer);
+
+    constexpr int kFrames = 20;
+    size_t total = 0;
+    pipeline.run([&](Frame &f) {
+        DetFrame d;
+        // Post publishes before it hands the frame on, and at most a pool's worth of frames are ahead.
+        EXPECT_EQ(reader.read(f.id - 1, d), ReadResult::Ok) << "frame " << f.id;
+        EXPECT_EQ(d.frame_id, static_cast<uint64_t>(f.id));
+        EXPECT_EQ(d.count, f.dets.size());
+        for (uint32_t i = 0; i < std::min<size_t>(d.count, f.dets.size()); ++i)
+        {
+            const Detection &want = f.dets[i];
+            const ShmDetection &got = d.dets[i];
+            EXPECT_EQ(got.class_id, want.class_id);
+            EXPECT_EQ(got.conf, want.conf);
+            EXPECT_EQ(got.x, want.box.x);
+            EXPECT_EQ(got.y, want.box.y);
+            EXPECT_EQ(got.w, want.box.width);
+            EXPECT_EQ(got.h, want.box.height);
+        }
+        total += d.count;
+        return f.id < kFrames;
+    });
+    EXPECT_GT(total, 0u) << "a comparison of empty frames proves nothing";
 }
 } // namespace

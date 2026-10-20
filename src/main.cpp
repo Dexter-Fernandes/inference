@@ -1,5 +1,6 @@
 #include "capture.hpp"
 #include "common.hpp"
+#include "det_ring.hpp"
 #include "encoder.hpp"
 #include "engine.hpp"
 #include "pipeline.hpp"
@@ -86,6 +87,12 @@ int run(int argc, char **argv)
         ->needs(encode_opt)
         ->capture_default_str();
 
+    std::string publish_name = "/inference_dets";
+    auto *publish_opt = app.add_option("--publish", publish_name,
+                                       "Also publish each frame's detections to shared memory NAME for tools/det_sub")
+                            ->expected(0, 1)
+                            ->capture_default_str();
+
     CLI11_PARSE(app, argc, argv);
 
     std::ofstream json_file;
@@ -127,7 +134,10 @@ int run(int argc, char **argv)
     // A live source needs the third frame to hold a fresh one beside the frames in infer and waiting; a file
     // blocks, so a third frame would only add latency.
     const int pool_size = pool_arg.value_or(cap.is_live() ? 3 : 2);
-    Pipeline pipeline(trt, cap, config, use_npp, std::move(names), pool_size);
+    std::optional<DetWriter> publisher;
+    if (publish_opt->count() > 0)
+        publisher.emplace(publish_name);
+    Pipeline pipeline(trt, cap, config, use_npp, std::move(names), pool_size, publisher ? &*publisher : nullptr);
     install_signal_handlers();
 
     using Clock = std::chrono::steady_clock;

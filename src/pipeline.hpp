@@ -15,6 +15,8 @@
 #include <string>
 #include <vector>
 
+class DetWriter;
+
 // capture -> preprocess -> infer -> post+render -> sink, one std::jthread per stage and the
 // sink on the caller's thread. Each thread owns its resources (Capture, NppPre and its stream,
 // the TensorRT context); frames move between them through queues and come from a fixed pool.
@@ -22,8 +24,10 @@ class Pipeline
 {
 public:
     // Allocates pool_size frames, which bounds the frames in flight and so the latency. From run()
-    // on, only the stage threads touch trt and cap.
-    Pipeline(Trt &trt, Capture &cap, const Config &cfg, bool use_npp, std::vector<std::string> names, int pool_size = 2);
+    // on, only the stage threads touch trt and cap. When publish is set, the post thread writes each
+    // frame's detections to it; it must outlive run().
+    Pipeline(Trt &trt, Capture &cap, const Config &cfg, bool use_npp, std::vector<std::string> names, int pool_size = 2,
+             DetWriter *publish = nullptr);
 
     // Call once. Calls sink for every frame in capture order. When sink returns false, capture
     // stops and frames still in flight are drained without reaching sink. Returns after every
@@ -50,6 +54,7 @@ private:
     const bool use_npp_;
     const std::vector<std::string> names_;
     const int pool_size_;
+    DetWriter *const publish_;
 
     Pool<Frame> pool_; // outlives run()'s threads and queues, so every handle comes back
     std::stop_source abort_;

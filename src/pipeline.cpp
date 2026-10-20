@@ -1,8 +1,10 @@
 #include "pipeline.hpp"
+#include "det_ring.hpp"
 #include "postprocess.hpp"
 #include "preprocess.hpp"
 #include "render.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <thread>
 #include <utility>
@@ -18,10 +20,29 @@ std::vector<Frame> make_frames(const Trt &trt, int n)
         frames.push_back(make_frame(trt));
     return frames;
 }
+
+int64_t to_ns(Clock::time_point t) { return std::chrono::duration_cast<std::chrono::nanoseconds>(t.time_since_epoch()).count(); }
+
+DetFrame to_det_frame(const Frame &fr)
+{
+    DetFrame d{};
+    d.frame_id = fr.id;
+    d.captured_ns = to_ns(fr.captured);
+    d.count = static_cast<uint32_t>(std::min<size_t>(fr.dets.size(), kMaxDets));
+    for (uint32_t i = 0; i < d.count; ++i)
+    {
+        const Detection &det = fr.dets[i];
+        d.dets[i] = {det.class_id, det.conf, det.box.x, det.box.y, det.box.width, det.box.height};
+    }
+    d.published_ns = to_ns(Clock::now());
+    return d;
+}
 } // namespace
 
-Pipeline::Pipeline(Trt &trt, Capture &cap, const Config &cfg, bool use_npp, std::vector<std::string> names, int pool_size)
-    : trt_(trt), cap_(cap), cfg_(cfg), use_npp_(use_npp), names_(std::move(names)), pool_size_(pool_size), pool_(make_frames(trt, pool_size))
+Pipeline::Pipeline(Trt &trt, Capture &cap, const Config &cfg, bool use_npp, std::vector<std::string> names, int pool_size,
+                   DetWriter *publish)
+    : trt_(trt), cap_(cap), cfg_(cfg), use_npp_(use_npp), names_(std::move(names)), pool_size_(pool_size), publish_(publish),
+      pool_(make_frames(trt, pool_size))
 {
 }
 
@@ -167,7 +188,11 @@ void Pipeline::run_post(Queue &in, Queue &out)
     while (auto f = in.pop(abort))
     {
         Frame &fr = **f;
-        fr.stage_ms.post = timed(post_tm, fr.id, "post", [&] { postprocess_stage(fr, cfg_); });
+        fr.stage_ms.post = timed(post_tm, fr.id, "post", [&] {
+            postprocess_stage(fr, cfg_);
+            if (publish_)
+                publish_->publish(to_det_frame(fr));
+        });
 
         const Clock::time_point now = Clock::now();
         if (last != Clock::time_point{})

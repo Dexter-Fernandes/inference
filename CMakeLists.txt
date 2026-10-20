@@ -37,11 +37,11 @@ FetchContent_MakeAvailable(cli11 nvtx googletest)
 
 add_library(inference_core STATIC
     src/capture.cpp src/report.cpp src/preprocess.cpp src/engine.cpp src/postprocess.cpp src/render.cpp src/filter.cu
-    src/pipeline.cpp src/encoder.cpp)
+    src/pipeline.cpp src/encoder.cpp src/det_ring.cpp)
 target_include_directories(inference_core PUBLIC src)
 target_link_libraries(inference_core PUBLIC ${OpenCV_LIBS} nvtx3-cpp nvinfer
     CUDA::cudart CUDA::nppc CUDA::nppidei CUDA::nppial)
-target_link_libraries(inference_core PRIVATE PkgConfig::LIBAV)
+target_link_libraries(inference_core PRIVATE PkgConfig::LIBAV rt) # glibc 2.31 keeps shm_open in librt
 
 add_executable(inference src/main.cpp)
 target_link_libraries(inference PRIVATE inference_core CLI11::CLI11)
@@ -50,13 +50,17 @@ target_link_libraries(inference PRIVATE inference_core CLI11::CLI11)
 add_executable(udp_send tools/udp_send.cpp)
 target_link_libraries(udp_send PRIVATE ${OpenCV_LIBS})
 
+# Reads the detections `inference --publish` puts in shared memory, from another process.
+add_executable(det_sub tools/det_sub.cpp)
+target_link_libraries(det_sub PRIVATE inference_core CLI11::CLI11)
+
 # unit_tests needs no GPU; gpu_tests needs the GPU plus assets/ (missing assets skip).
-# tests/tsan.sh runs the queue and pool tests under ThreadSanitizer.
+# tests/tsan.sh runs the queue, pool and det ring tests under ThreadSanitizer.
 enable_testing()
 include(GoogleTest)
 
 add_executable(unit_tests tests/test_letterbox.cpp tests/test_postprocess.cpp tests/test_capture.cpp tests/test_report.cpp
-    tests/test_bounded_queue.cpp tests/test_pool.cpp tests/test_encoder.cpp)
+    tests/test_bounded_queue.cpp tests/test_pool.cpp tests/test_encoder.cpp tests/test_det_ring.cpp)
 target_link_libraries(unit_tests PRIVATE inference_core GTest::gtest_main)
 gtest_discover_tests(unit_tests DISCOVERY_MODE PRE_TEST)
 
