@@ -18,17 +18,7 @@ On a 1080p, 59.94 fps file the pipeline runs at about 26.8 fps with a median cap
 
 ## Architecture
 
-```
-                       Pool<Frame>  (--pool frames, allocated once)
-                           |  acquire                     ^  frame returns when
-                           v                              |  its last holder drops it
- capture ----> preprocess ----> infer ----> post + render ----> sink (main thread)
- thread         thread          thread      thread               |  imshow, stop checks
- read frame     resize (CPU)    TensorRT    decode + NMS         |  latency stamp
- into scratch   NPP on GPU      enqueue     draw boxes           +--> Encoder thread (libavcodec)
-                own CUDA        own CUDA    publish() to              2 slots, drops counted
-                stream          stream      shared memory
-```
+![Thread graph: capture, preprocess, infer and post + render threads feed a sink on the main thread through queues, with a frame pool, a shared-memory ring and an encoder thread beside them](docs/architecture.svg)
 
 Four stage threads are `std::jthread`s. The sink runs on the caller's thread, because highgui needs the main thread. A bounded queue joins each pair of stages. Each stage owns its resources (the `Capture`, the NPP context and its stream, the TensorRT context), so no stage shares mutable state with another except through a queue.
 
@@ -204,3 +194,4 @@ The ring's memory ordering has evidence of three kinds, and ThreadSanitizer is n
 | `src/report.{hpp,cpp}`, `src/timing.hpp` | the JSON report and stage timing |
 | `tools/det_sub.cpp`, `tools/udp_send.cpp` | the ring reader and the UDP test sender |
 | `tests/` | GoogleTest suites and `tsan.sh` |
+| `docs/architecture.svg` | the thread diagram above |

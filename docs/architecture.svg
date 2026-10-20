@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1020 400" width="1020" height="400" role="img" aria-labelledby="t d" font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title id="t">Thread graph of the inference pipeline</title>
+  <desc id="d">Capture, preprocess, infer and post-and-render threads feed a sink on the main thread through bounded queues. A frame pool lends frames to capture and takes them back from the sink. The post thread publishes detections to a shared-memory ring, and the sink copies frames to an encoder thread.</desc>
+  <style>
+    :root { --bg: #ffffff; --box: #f3f6fa; --stroke: #57606a; --text: #1f2328; --muted: #57606a; --accent: #0969da; --accent-fill: #ddf4ff; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #0d1117; --box: #161b22; --stroke: #8b949e; --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff; --accent-fill: #12263f; }
+    }
+    .bg { fill: var(--bg); }
+    .box { fill: var(--box); stroke: var(--stroke); stroke-width: 1.5; }
+    .side { fill: var(--accent-fill); stroke: var(--accent); stroke-width: 1.5; }
+    .pool { fill: var(--accent-fill); stroke: var(--accent); stroke-width: 1.5; }
+    .line { stroke: var(--stroke); stroke-width: 1.5; fill: none; }
+    .pline { stroke: var(--accent); stroke-width: 1.5; fill: none; stroke-dasharray: 5 4; }
+    .head { fill: var(--stroke); }
+    .phead { fill: var(--accent); }
+    .title { fill: var(--text); font-size: 15px; font-weight: 600; text-anchor: middle; }
+    .sub { fill: var(--muted); font-size: 12px; text-anchor: middle; }
+    .label { fill: var(--muted); font-size: 11px; text-anchor: middle; }
+    .label.start { text-anchor: start; }
+    .label.end { text-anchor: end; }
+    .note { fill: var(--muted); font-size: 12px; }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="head" d="M0 0 L10 5 L0 10 z"/></marker>
+    <marker id="parrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="phead" d="M0 0 L10 5 L0 10 z"/></marker>
+  </defs>
+  <rect class="bg" width="1020" height="400"/>
+
+  <!-- frame pool -->
+  <rect class="pool" x="30" y="24" width="960" height="40" rx="8"/>
+  <text class="title" x="510" y="49">Pool&lt;Frame&gt;, --pool frames allocated once</text>
+  <path class="pline" d="M110 64 V130" marker-end="url(#parrow)"/>
+  <text class="label start" x="122" y="100">acquire</text>
+  <path class="pline" d="M910 130 V64" marker-end="url(#parrow)"/>
+  <text class="label end" x="898" y="92">a frame returns when</text>
+  <text class="label end" x="898" y="106">its last holder drops it</text>
+
+  <!-- stage threads -->
+  <rect class="box" x="30" y="130" width="160" height="104" rx="8"/>
+  <text class="title" x="110" y="156">capture</text>
+  <text class="sub" x="110" y="178">reads into a scratch image</text>
+  <text class="sub" x="110" y="196">takes a pooled frame</text>
+  <text class="sub" x="110" y="214">drops the read if none</text>
+
+  <rect class="box" x="230" y="130" width="160" height="104" rx="8"/>
+  <text class="title" x="310" y="156">preprocess</text>
+  <text class="sub" x="310" y="178">cv::resize on the CPU</text>
+  <text class="sub" x="310" y="196">NPP pad, convert, NCHW</text>
+  <text class="sub" x="310" y="214">own CUDA stream</text>
+
+  <rect class="box" x="430" y="130" width="160" height="104" rx="8"/>
+  <text class="title" x="510" y="156">infer</text>
+  <text class="sub" x="510" y="178">TensorRT enqueue</text>
+  <text class="sub" x="510" y="196">GPU objectness filter</text>
+  <text class="sub" x="510" y="214">renumbers frame ids</text>
+
+  <rect class="box" x="630" y="130" width="160" height="104" rx="8"/>
+  <text class="title" x="710" y="156">post + render</text>
+  <text class="sub" x="710" y="178">decode boxes, NMS</text>
+  <text class="sub" x="710" y="196">draw the detections</text>
+  <text class="sub" x="710" y="214">publish to the ring</text>
+
+  <rect class="box" x="830" y="130" width="160" height="104" rx="8"/>
+  <text class="title" x="910" y="156">sink</text>
+  <text class="sub" x="910" y="178">main thread, imshow</text>
+  <text class="sub" x="910" y="196">latency stamp</text>
+  <text class="sub" x="910" y="214">stop checks</text>
+
+  <!-- queues -->
+  <path class="line" d="M190 182 H228" marker-end="url(#arrow)"/>
+  <text class="label" x="210" y="172">queue</text>
+  <path class="line" d="M390 182 H428" marker-end="url(#arrow)"/>
+  <text class="label" x="410" y="172">queue*</text>
+  <path class="line" d="M590 182 H628" marker-end="url(#arrow)"/>
+  <text class="label" x="610" y="172">queue</text>
+  <path class="line" d="M790 182 H828" marker-end="url(#arrow)"/>
+  <text class="label" x="810" y="172">queue</text>
+
+  <!-- side outputs -->
+  <path class="line" d="M710 234 V298" marker-end="url(#arrow)"/>
+  <text class="label end" x="698" y="270">publish()</text>
+  <rect class="side" x="630" y="298" width="160" height="62" rx="8"/>
+  <text class="title" x="710" y="324">shared-memory ring</text>
+  <text class="sub" x="710" y="344">seqlock, 8 slots</text>
+
+  <path class="line" d="M910 234 V298" marker-end="url(#arrow)"/>
+  <text class="label end" x="898" y="262">copy into a free slot,</text>
+  <text class="label end" x="898" y="276">drop the frame if both are busy</text>
+  <rect class="side" x="830" y="298" width="160" height="62" rx="8"/>
+  <text class="title" x="910" y="324">encoder thread</text>
+  <text class="sub" x="910" y="344">libavcodec, 2 slots</text>
+
+  <text class="note" x="30" y="388">* On a live source this queue holds one frame, and a newer frame replaces the waiting one. On a file, every queue holds the whole pool.</text>
+</svg>
