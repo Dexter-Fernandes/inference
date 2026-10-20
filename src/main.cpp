@@ -5,13 +5,12 @@
 #include "engine.hpp"
 #include "pipeline.hpp"
 #include "report.hpp"
+#include "stop_signal.hpp"
 
 #include <opencv2/highgui.hpp>
 #include <CLI/CLI.hpp>
 
-#include <atomic>
 #include <chrono>
-#include <csignal>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -24,20 +23,6 @@
 
 namespace
 {
-std::atomic<bool> g_stop{false};
-static_assert(std::atomic<bool>::is_always_lock_free);
-
-void on_signal(int) { g_stop.store(true, std::memory_order_relaxed); }
-
-void install_signal_handlers()
-{
-    struct sigaction sa{};
-    sa.sa_handler = on_signal;
-    sigemptyset(&sa.sa_mask);
-    for (const int sig : {SIGINT, SIGTERM})
-        sigaction(sig, &sa, nullptr);
-}
-
 int run(int argc, char **argv)
 {
     CLI::App app("Runs an object detection on a video or webcam");

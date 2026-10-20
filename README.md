@@ -74,7 +74,7 @@ Read the detections from a second process. Run the second command in another ter
 
 ```sh
 docker compose run --rm trt ./build-trt/inference -s assets/test.mp4 --headless --frames 600 --publish
-docker compose --profile ipc run --rm det_sub ./build-trt/det_sub --frames 300
+docker compose run --rm trt ./build-trt/det_sub --frames 300
 ```
 
 `tools/udp_send` streams a file as MPEG-TS and prints the frame rate it reached. A reader of an `--encode udp://` H.264 stream needs `?buffer_size=4194304` on its URL. With the default 208 KB socket buffer, a reader logged 8 H.264 decode-error lines at 1080p, and with the larger buffer it logged none in two runs. Keyframe bursts overflowing the buffer is the likely cause, but no socket drop counter was read.

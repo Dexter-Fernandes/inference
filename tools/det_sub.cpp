@@ -3,13 +3,12 @@
 // det_sub [--name NAME] [--poll-us N] [--frames N] [--quiet]
 #include "det_ring.hpp"
 #include "report.hpp"
+#include "stop_signal.hpp"
 
 #include <CLI/CLI.hpp>
 
 #include <algorithm>
-#include <atomic>
 #include <chrono>
-#include <csignal>
 #include <cstdio>
 #include <exception>
 #include <limits>
@@ -18,11 +17,6 @@
 
 namespace
 {
-std::atomic<bool> g_stop{false};
-static_assert(std::atomic<bool>::is_always_lock_free);
-
-void on_signal(int) { g_stop.store(true, std::memory_order_relaxed); }
-
 int run(int argc, char **argv)
 {
     CLI::App app("Prints the detections another process publishes to shared memory");
@@ -45,11 +39,7 @@ int run(int argc, char **argv)
 
     DetReader reader(name);
 
-    struct sigaction sa{};
-    sa.sa_handler = on_signal;
-    sigemptyset(&sa.sa_mask);
-    for (const int sig : {SIGINT, SIGTERM})
-        sigaction(sig, &sa, nullptr);
+    install_signal_handlers();
 
     using Clock = std::chrono::steady_clock;
     uint64_t next = reader.published(); // only frames published from now on
@@ -94,8 +84,7 @@ int run(int argc, char **argv)
         case ReadResult::Lapped:
         {
             // The newest complete publication is published() - 1; published() itself is still being made.
-            const uint64_t published = reader.published();
-            const uint64_t head = std::max(next + 1, published > 0 ? published - 1 : 0);
+            const uint64_t head = std::max(next + 1, reader.published() - 1); // a lap means at least kRingSlots published
             skipped += head - next; // includes frames still readable: we jump to the newest on purpose
             next = head;
             break;

@@ -16,7 +16,6 @@
 namespace
 {
 constexpr uint64_t kMagic = 0x44455452494e4731; // "DETRING1"
-constexpr uint32_t kVersion = 1;
 constexpr size_t kWords = sizeof(DetFrame) / 8;
 
 static_assert(std::atomic<uint64_t>::is_always_lock_free); // a load must not write: the reader's mapping is PROT_READ
@@ -31,17 +30,6 @@ struct Fd
     int fd;
     ~Fd() { close(fd); }
 };
-
-struct Unlinker
-{
-    const std::string &name;
-    bool armed = true;
-    ~Unlinker()
-    {
-        if (armed)
-            shm_unlink(name.c_str());
-    }
-};
 } // namespace
 
 // Publication n lives in slot n % kRingSlots. Its seq is 2n+1 while the writer fills it and 2n+2 once
@@ -55,7 +43,6 @@ struct DetRing
     };
 
     std::atomic<uint64_t> magic; // stored last, so a reader never sees a half-initialised header
-    uint32_t version, slots;
     std::atomic<uint64_t> write_seq; // publications completed
     Slot slot[kRingSlots];
 };
@@ -66,17 +53,13 @@ DetWriter::DetWriter(std::string name) : name_(std::move(name))
     Fd fd{shm_open(name_.c_str(), O_CREAT | O_EXCL | O_RDWR, 0600)}; // det_sub runs as the same uid
     if (fd.fd < 0)
         fail("shm_open", name_);
-    Unlinker created{name_}; // a half-made file would otherwise outlive the failed constructor
     if (ftruncate(fd.fd, sizeof(DetRing)) < 0)
         fail("ftruncate", name_);
     void *p = mmap(nullptr, sizeof(DetRing), PROT_READ | PROT_WRITE, MAP_SHARED, fd.fd, 0);
     if (p == MAP_FAILED)
         fail("mmap", name_);
     ring_ = new (p) DetRing{};
-    ring_->version = kVersion;
-    ring_->slots = kRingSlots;
     ring_->magic.store(kMagic, std::memory_order_release);
-    created.armed = false;
 }
 
 DetWriter::~DetWriter()
@@ -115,10 +98,10 @@ DetReader::DetReader(const std::string &name)
     if (p == MAP_FAILED)
         fail("mmap", name);
     ring_ = static_cast<const DetRing *>(p);
-    if (ring_->magic.load(std::memory_order_acquire) != kMagic || ring_->version != kVersion || ring_->slots != kRingSlots)
+    if (ring_->magic.load(std::memory_order_acquire) != kMagic)
     {
         munmap(p, sizeof(DetRing));
-        throw std::runtime_error(name + " is not a detection ring: wrong magic or version");
+        throw std::runtime_error(name + " is not a detection ring: wrong magic");
     }
 }
 
