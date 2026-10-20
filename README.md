@@ -64,7 +64,7 @@ Run on a file and print the JSON report.
 docker compose run --rm trt ./build-trt/inference -s assets/test.mp4 --headless --frames 600 --json -
 ```
 
-Drop `--headless` for a window, after running `xhost +local:` once per login. The windowed run has not been checked with `ipc: host` set (see [Known limits](#known-limits)).
+Drop `--headless` for a window, after running `xhost +local:` once per login. A windowed run works with `ipc: host` set.
 
 Write the annotated video with `--encode`. The container follows the file extension, and `--codec` accepts `libx264`, `libx265`, and `libvpx-vp9`.
 
@@ -181,7 +181,6 @@ The ring's memory ordering has evidence of three kinds, and ThreadSanitizer is n
 ## Known limits
 
 - `compose.yaml` sets `ipc: host` on the `trt` service. Of three ways tried to share `/dev/shm` between two containers running as uid 1000, it was the only one that worked. A tmpfs volume gives each container its own empty tmpfs, and a plain volume is owned by root. Two side effects follow. Every `docker compose run trt` shares the host's `/dev/shm`, and a SIGKILL leaves the ring file there. Whether to keep the setting on `trt` or move it to a separate publisher service is undecided.
-- A windowed run with `ipc: host` has not been run. X access control was on, and the code before this setting fails the same way, so the cause is the environment.
 - `det_sub` reporting 0 skipped does not mean no frames were dropped. Published ids are the sink's, so frames dropped at capture or replaced before infer never receive an id. The producer's `--json` `dropped` field holds that count.
 - After a producer restart, `det_sub` keeps waiting on the old mapping and needs a restart.
 - `DetWriter` unlinks any same-user object that has its name, because it must replace a stale file. A second publisher on one name unlinks the first one's file.
