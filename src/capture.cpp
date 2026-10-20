@@ -14,6 +14,14 @@ constexpr std::chrono::seconds kReconnectBudget{5};
 // reconnect starts, and each reopen attempt could block past the whole budget.
 constexpr int kStreamOpenTimeoutMs = 2000;
 constexpr int kStreamReadTimeoutMs = 1000;
+// Streams often report 0 or a 90 kHz tick rate.
+constexpr double kFallbackFps = 30.0;
+constexpr double kMaxFps = 240.0;
+
+double sane_fps(double reported)
+{
+    return reported >= 1.0 && reported <= kMaxFps ? reported : kFallbackFps;
+}
 } // namespace
 
 bool is_camera_source(const std::string &source)
@@ -31,6 +39,9 @@ Capture::Capture(const std::string &source)
 {
     if (!open())
         throw std::runtime_error("Failed to open source: " + source_);
+    format_ = {{static_cast<int>(cap_.get(cv::CAP_PROP_FRAME_WIDTH)), static_cast<int>(cap_.get(cv::CAP_PROP_FRAME_HEIGHT))},
+               sane_fps(cap_.get(cv::CAP_PROP_FPS)),
+               is_live_};
 }
 
 bool Capture::open()

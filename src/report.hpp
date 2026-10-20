@@ -1,6 +1,7 @@
 #pragma once
 
 #include <iosfwd>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -20,6 +21,14 @@ struct LatencyMs
 // Nearest-rank percentiles; all zero when ms is empty.
 LatencyMs summarize_latency(std::vector<double> ms);
 
+struct EncodeStats
+{
+    std::string codec; // libav encoder name, e.g. "libx264"
+    int frames = 0;
+    int dropped = 0;   // frames skipped because every encoder slot was busy
+    double ms = 0.0;   // average convert + encode + mux time per frame since the warmup frame
+};
+
 struct RunReport
 {
     std::string source;
@@ -31,6 +40,7 @@ struct RunReport
     int reconnects = 0;
     int dropped = 0;    // live frames skipped because the pipeline was full
     LatencyMs latency;  // capture to sink, over the measured frames
+    std::optional<EncodeStats> encode;
     StopReason stopped_by = StopReason::Eof;
 };
 

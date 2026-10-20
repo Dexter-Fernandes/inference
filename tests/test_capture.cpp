@@ -40,6 +40,9 @@ TEST(Capture, FileEndsAtEofWithoutReconnects)
             w.write(cv::Mat(48, 64, CV_8UC3, cv::Scalar(i * 40, 0, 0)));
     }
     Capture cap(path);
+    EXPECT_EQ(cap.format().size, cv::Size(64, 48));
+    EXPECT_EQ(cap.format().fps, 10.0);
+    EXPECT_FALSE(cap.format().live);
     cv::Mat frame;
     for (int i = 0; i < 3; i++)
         EXPECT_TRUE(cap.read(frame)) << i;

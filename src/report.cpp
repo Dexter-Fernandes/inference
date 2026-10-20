@@ -58,7 +58,10 @@ void write_json(std::ostream &os, const RunReport &r)
       << ", \"infer\": " << r.infer_ms << ", \"post\": " << r.post_ms << ", \"render\": " << r.render_ms
       << "}, \"reconnects\": " << r.reconnects << ", \"dropped\": " << r.dropped
       << ", \"latency_ms\": {\"p50\": " << r.latency.p50 << ", \"p95\": " << r.latency.p95
-      << ", \"p99\": " << r.latency.p99 << ", \"max\": " << r.latency.max
-      << "}, \"stopped_by\": \"" << to_string(r.stopped_by) << "\"}\n";
+      << ", \"p99\": " << r.latency.p99 << ", \"max\": " << r.latency.max << "}";
+    if (r.encode)
+        s << ", \"encode\": {\"codec\": \"" << r.encode->codec << "\", \"frames\": " << r.encode->frames
+          << ", \"dropped\": " << r.encode->dropped << ", \"ms\": " << r.encode->ms << "}";
+    s << ", \"stopped_by\": \"" << to_string(r.stopped_by) << "\"}\n";
     os << s.str() << std::flush;
 }

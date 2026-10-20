@@ -1,5 +1,6 @@
 #include "capture.hpp"
 #include "common.hpp"
+#include "encoder.hpp"
 #include "engine.hpp"
 #include "pipeline.hpp"
 #include "report.hpp"
@@ -11,9 +12,11 @@
 #include <chrono>
 #include <csignal>
 #include <exception>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -74,6 +77,15 @@ int run(int argc, char **argv)
     std::string json_path;
     app.add_option("--json", json_path, "Write a JSON run report to PATH at the end ('-' for stdout)");
 
+    std::string encode_target;
+    auto *encode_opt = app.add_option("--encode", encode_target,
+                                      "Also write the rendered video to FILE (container from the extension) or udp://host:port (MPEG-TS)");
+    std::string codec = "libx264";
+    app.add_option("--codec", codec, "Encoder for --encode")
+        ->check(CLI::IsMember(Encoder::codec_names()))
+        ->needs(encode_opt)
+        ->capture_default_str();
+
     CLI11_PARSE(app, argc, argv);
 
     std::ofstream json_file;
@@ -92,6 +104,16 @@ int run(int argc, char **argv)
     config.input_size = trt.in_dims.d[2]; // NCHW, square
 
     Capture cap(source);
+
+    std::optional<Encoder> encoder;
+    if (!encode_target.empty())
+    {
+        // The encoder truncates its target on open, and capture already holds the source.
+        std::error_code ec;
+        if (!cap.is_live() && std::filesystem::equivalent(source, encode_target, ec))
+            throw std::runtime_error("--encode would overwrite the --source file: " + source);
+        encoder.emplace(encode_target, codec, cap.format());
+    }
 
     std::vector<std::string> names; // empty is fine: draw() falls back to class ids
     {
@@ -128,6 +150,11 @@ int run(int argc, char **argv)
                 latency_ms.push_back(std::chrono::duration<double, std::milli>(now - f.captured).count());
         }
 
+        // After the latency stamp, so the copy is not counted; before the stop checks, so the frame
+        // that ends a run is encoded too.
+        if (encoder)
+            encoder->submit(f.image, f.id, f.captured);
+
         if (f.id % 100 == 0)
             std::cerr << cv::format("frame %d: read %.1f | pre %.1f | infer %.1f | post %.1f | render %.1f ms\n",
                                     f.id, stage_ms.read, stage_ms.pre, stage_ms.infer, stage_ms.post, stage_ms.render);
@@ -142,6 +169,10 @@ int run(int argc, char **argv)
             return true;
         return false;
     });
+
+    std::optional<EncodeStats> encode_stats;
+    if (encoder)
+        encode_stats = encoder->finish();
 
     if (json_out)
     {
@@ -163,6 +194,7 @@ int run(int argc, char **argv)
         report.post_ms = stage_ms.post;
         report.render_ms = stage_ms.render;
         report.latency = summarize_latency(std::move(latency_ms));
+        report.encode = std::move(encode_stats);
         write_json(*json_out, report);
     }
     return 0;

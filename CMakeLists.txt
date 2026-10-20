@@ -15,6 +15,8 @@ endif()
 # Built inside the TensorRT container (see Dockerfile / compose.yaml)
 find_package(CUDAToolkit REQUIRED)
 find_package(OpenCV REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LIBAV REQUIRED IMPORTED_TARGET libavcodec libavformat libavutil libswscale)
 
 include(FetchContent)
 FetchContent_Declare(cli11
@@ -35,10 +37,11 @@ FetchContent_MakeAvailable(cli11 nvtx googletest)
 
 add_library(inference_core STATIC
     src/capture.cpp src/report.cpp src/preprocess.cpp src/engine.cpp src/postprocess.cpp src/render.cpp src/filter.cu
-    src/pipeline.cpp)
+    src/pipeline.cpp src/encoder.cpp)
 target_include_directories(inference_core PUBLIC src)
 target_link_libraries(inference_core PUBLIC ${OpenCV_LIBS} nvtx3-cpp nvinfer
     CUDA::cudart CUDA::nppc CUDA::nppidei CUDA::nppial)
+target_link_libraries(inference_core PRIVATE PkgConfig::LIBAV)
 
 add_executable(inference src/main.cpp)
 target_link_libraries(inference PRIVATE inference_core CLI11::CLI11)
@@ -49,7 +52,7 @@ enable_testing()
 include(GoogleTest)
 
 add_executable(unit_tests tests/test_letterbox.cpp tests/test_postprocess.cpp tests/test_capture.cpp tests/test_report.cpp
-    tests/test_bounded_queue.cpp tests/test_pool.cpp)
+    tests/test_bounded_queue.cpp tests/test_pool.cpp tests/test_encoder.cpp)
 target_link_libraries(unit_tests PRIVATE inference_core GTest::gtest_main)
 gtest_discover_tests(unit_tests DISCOVERY_MODE PRE_TEST)
 

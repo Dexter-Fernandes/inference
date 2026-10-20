@@ -5,6 +5,7 @@
 #include "common.hpp"
 #include "engine.hpp"
 #include "pool.hpp"
+#include "timing.hpp"
 
 #include <exception>
 #include <functional>
@@ -13,8 +14,6 @@
 #include <stop_token>
 #include <string>
 #include <vector>
-
-constexpr int kWarmupFrame = 10; // each stage resets its timer when this frame reaches it
 
 // capture -> preprocess -> infer -> post+render -> sink, one std::jthread per stage and the
 // sink on the caller's thread. Each thread owns its resources (Capture, NppPre and its stream,

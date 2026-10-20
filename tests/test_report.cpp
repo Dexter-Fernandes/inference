@@ -38,6 +38,19 @@ TEST(WriteJson, ExactOutput)
               "\n");
 }
 
+TEST(WriteJson, EncodeBlockSitsBeforeStoppedBy)
+{
+    RunReport r;
+    r.encode = EncodeStats{.codec = "libx264", .frames = 98, .dropped = 2, .ms = 12.5};
+    std::ostringstream os;
+    write_json(os, r);
+    EXPECT_NE(os.str().find(R"("max": 0.000}, "encode": {"codec": "libx264", "frames": 98, "dropped": 2, "ms": 12.500}, )"
+                            R"("stopped_by": "eof"})"
+                            "\n"),
+              std::string::npos)
+        << os.str();
+}
+
 TEST(WriteJson, NoMeasuredFramesGivesZeroFpsNotInf)
 {
     RunReport r;
