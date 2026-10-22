@@ -49,5 +49,6 @@ struct Frame
     cv::Mat out;              // net output rows that passed the GPU objectness filter
     int num_kept = 0;         // valid rows at the start of out
     std::vector<Detection> dets;
+    double fps = 0; // smoothed throughput when the post thread handled this frame
     StageMs stage_ms; // each stage writes its own running average as the frame passes
 };

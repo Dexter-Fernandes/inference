@@ -32,19 +32,41 @@ FetchContent_Declare(googletest
     GIT_REPOSITORY https://github.com/google/googletest.git
     GIT_TAG v1.14.0
     GIT_SHALLOW TRUE)
+FetchContent_Declare(glfw
+    GIT_REPOSITORY https://github.com/glfw/glfw.git
+    GIT_TAG 3.4
+    GIT_SHALLOW TRUE)
+FetchContent_Declare(imgui
+    GIT_REPOSITORY https://github.com/ocornut/imgui.git
+    GIT_TAG v1.91.9
+    GIT_SHALLOW TRUE)
 set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(cli11 nvtx googletest)
+set(GLFW_BUILD_WAYLAND OFF CACHE BOOL "" FORCE) # the image has the X11 dev libraries only
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(cli11 nvtx googletest glfw imgui)
+find_package(OpenGL REQUIRED)
+
+# ImGui ships no CMake; the window code links it, the tests do not.
+add_library(imgui STATIC
+    ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp ${imgui_SOURCE_DIR}/imgui_tables.cpp
+    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp)
+target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
+target_link_libraries(imgui PUBLIC glfw OpenGL::GL)
 
 add_library(inference_core STATIC
     src/capture.cpp src/report.cpp src/preprocess.cpp src/engine.cpp src/postprocess.cpp src/render.cpp src/filter.cu
-    src/pipeline.cpp src/encoder.cpp src/det_ring.cpp)
+    src/pipeline.cpp src/encoder.cpp src/det_ring.cpp src/legend.cpp)
 target_include_directories(inference_core PUBLIC src)
 target_link_libraries(inference_core PUBLIC ${OpenCV_LIBS} nvtx3-cpp nvinfer
     CUDA::cudart CUDA::nppc CUDA::nppidei CUDA::nppial)
 target_link_libraries(inference_core PRIVATE PkgConfig::LIBAV rt) # glibc 2.31 keeps shm_open in librt
 
-add_executable(inference src/main.cpp)
-target_link_libraries(inference PRIVATE inference_core CLI11::CLI11)
+add_executable(inference src/main.cpp src/gui.cpp)
+target_link_libraries(inference PRIVATE inference_core CLI11::CLI11 imgui)
 
 # Test source for live-URL input: streams a file over UDP at its own frame rate.
 add_executable(udp_send tools/udp_send.cpp)
@@ -60,7 +82,7 @@ enable_testing()
 include(GoogleTest)
 
 add_executable(unit_tests tests/test_letterbox.cpp tests/test_postprocess.cpp tests/test_capture.cpp tests/test_report.cpp
-    tests/test_bounded_queue.cpp tests/test_pool.cpp tests/test_encoder.cpp tests/test_det_ring.cpp)
+    tests/test_bounded_queue.cpp tests/test_pool.cpp tests/test_encoder.cpp tests/test_det_ring.cpp tests/test_legend.cpp)
 target_link_libraries(unit_tests PRIVATE inference_core GTest::gtest_main)
 gtest_discover_tests(unit_tests DISCOVERY_MODE PRE_TEST)
 

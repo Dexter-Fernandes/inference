@@ -3,11 +3,11 @@
 #include "det_ring.hpp"
 #include "encoder.hpp"
 #include "engine.hpp"
+#include "gui.hpp"
 #include "pipeline.hpp"
 #include "report.hpp"
 #include "stop_signal.hpp"
 
-#include <opencv2/highgui.hpp>
 #include <CLI/CLI.hpp>
 
 #include <chrono>
@@ -58,7 +58,7 @@ int run(int argc, char **argv)
         ->check(CLI::Range(2, 16));
 
     bool headless = false;
-    app.add_flag("--headless", headless, "No window; nothing touches highgui");
+    app.add_flag("--headless", headless, "No window");
 
     std::string json_path;
     app.add_option("--json", json_path, "Write a JSON run report to PATH at the end ('-' for stdout)");
@@ -107,7 +107,7 @@ int run(int argc, char **argv)
         encoder.emplace(encode_target, codec, cap.format());
     }
 
-    std::vector<std::string> names; // empty is fine: draw() falls back to class ids
+    std::vector<std::string> names; // empty is fine: the labels and the legend fall back to class ids
     {
         std::ifstream f("assets/coco.names");
         if (!f)
@@ -122,7 +122,11 @@ int run(int argc, char **argv)
     std::optional<DetWriter> publisher;
     if (publish_opt->count() > 0)
         publisher.emplace(publish_name);
-    Pipeline pipeline(trt, cap, config, use_npp, std::move(names), pool_size, publisher ? &*publisher : nullptr);
+    // The window draws its own boxes in the sink, so the post thread annotates only for a headless run.
+    std::optional<Gui> gui;
+    if (!headless)
+        gui.emplace(names);
+    Pipeline pipeline(trt, cap, config, use_npp, std::move(names), pool_size, publisher ? &*publisher : nullptr, headless);
     install_signal_handlers();
 
     using Clock = std::chrono::steady_clock;
@@ -132,9 +136,7 @@ int run(int argc, char **argv)
     Clock::time_point measure_start, measure_end;
     StopReason stopped_by = StopReason::Eof;
     pipeline.run([&](Frame &f) {
-        if (!headless)
-            cv::imshow("Playback", f.image);
-        const int key = headless ? 0 : cv::waitKey(1) & 0xFF;
+        const bool open = !gui || gui->show(f);
 
         const Clock::time_point now = Clock::now();
         frames = f.id;
@@ -154,10 +156,13 @@ int run(int argc, char **argv)
             encoder->submit(f.image, f.id, f.captured);
 
         if (f.id % 100 == 0)
-            std::cerr << cv::format("frame %d: read %.1f | pre %.1f | infer %.1f | post %.1f | render %.1f ms\n",
-                                    f.id, stage_ms.read, stage_ms.pre, stage_ms.infer, stage_ms.post, stage_ms.render);
+        {
+            std::cerr << stage_line(f.id, stage_ms) << "\n";
+            if (gui)
+                gui->set_stage_rows(stage_rows(f.id, stage_ms));
+        }
 
-        if (key == 'q' || key == 27)
+        if (!open)
             stopped_by = StopReason::Key;
         else if (g_stop.load(std::memory_order_relaxed))
             stopped_by = StopReason::Signal;

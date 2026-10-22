@@ -56,7 +56,11 @@ docker compose run --rm trt ./build-trt/inference -s assets/test.mp4 --headless 
 
 Drop `--headless` for a window, after running `xhost +local:` once per login. A windowed run works with `ipc: host` set.
 
-Write the annotated video with `--encode`. The container follows the file extension, and `--codec` accepts `libx264`, `libx265`, and `libvpx-vp9`.
+The window is an ImGui viewer. The video fills the left side, and a sidebar on the right holds three sections: an LCD readout of FPS and detection count, a legend with one row per detected class (a lamp in the class colour, the box count, and a switch that hides that class's boxes), and a fixed-size two-row debug screen behind a roll-up shutter (click it to roll it up or down), which shows the latest per-stage timing line, split over two rows and refreshed every 100 frames. Boxes carry no labels in the window; the legend colour identifies the class. A class that stops being detected stays in the legend, greyed, for 15 s and then leaves. A hidden class stays hidden if it comes back. The legend hands out its 12 colours so that listed classes never share one, and a 13th class listed at once reuses a colour. `q`, `Esc` and closing the window stop the run. A headless run still burns labels and the FPS line into the video, colouring by `class_id % 12`.
+
+The window draws through Mesa on the display's GPU, not the NVIDIA one. On this laptop X is XWayland on the Intel iGPU, which is why `compose.yaml` mounts `/dev/dri`; the first stderr line, `GL_RENDERER`, names the device. The 940MX is a compute-only 3D controller here, so NVIDIA GL could not draw to this display. The window adds about 6 ms to the render stage (8.7 against 2.2 ms, median of 3 interleaved runs) and does not change throughput or latency: inference sets both.
+
+Write the annotated video with `--encode`. In a windowed run it holds the boxes the window shows, without labels and with the switches applied. The container follows the file extension, and `--codec` accepts `libx264`, `libx265`, and `libvpx-vp9`.
 
 ```sh
 docker compose run --rm trt ./build-trt/inference -s assets/test.mp4 --headless --frames 600 --encode /work/out.mp4 --codec libx264
@@ -87,7 +91,7 @@ docker compose run --rm trt ./build-trt/det_sub --frames 300
 | `--conf`, `--nms` | 0.25, 0.5 | confidence and NMS IoU thresholds |
 | `--frames N` | unlimited | stop after N frames |
 | `--pool N` | 2 for files, 3 for live | frames in flight, 2 to 16 |
-| `--headless` | off | no window |
+| `--headless` | off | no window; boxes, labels and the FPS line are burned into the video instead |
 | `--json PATH` | off | JSON run report (`-` for stdout) |
 | `--encode TARGET`, `--codec` | off, `libx264` | write the rendered video to a file or `udp://host:port` |
 | `--publish [NAME]` | off, `/inference_dets` | publish detections to shared memory |
@@ -164,7 +168,7 @@ The writer stores the odd sequence, issues a release fence, stores the payload, 
 
 ## Testing
 
-`ctest` runs 65 tests, 6 of them labeled `gpu`. The suite covers letterbox geometry, postprocess and NMS on synthetic rows, the queue and the pool, the encoder (including a readback of each codec), the JSON report, and the ring. The GPU tests compare the NPP preprocess with the CPU blob (maximum absolute difference 5.96e-8), compare TensorRT with `cv::dnn` on the ONNX model over 10 frames (288 of 288 detections matched in both directions), and check that the pipeline returns the same frames and detections as the serial stages. `tests/tsan.sh` builds the queue, pool, and ring tests alone under ThreadSanitizer (23 tests, no reports).
+`ctest` runs 74 tests, 6 of them labeled `gpu`. The suite covers letterbox geometry, postprocess and NMS on synthetic rows, the queue and the pool, the encoder (including a readback of each codec), the JSON report, the legend, and the ring. The GPU tests compare the NPP preprocess with the CPU blob (maximum absolute difference 5.96e-8), compare TensorRT with `cv::dnn` on the ONNX model over 10 frames (288 of 288 detections matched in both directions), and check that the pipeline returns the same frames and detections as the serial stages. `tests/tsan.sh` builds the queue, pool, and ring tests alone under ThreadSanitizer (23 tests, no reports).
 
 The ring's memory ordering has evidence of three kinds, and ThreadSanitizer is not one of them. GCC 11's ThreadSanitizer does not model `atomic_thread_fence`, and the writer and each reader map the file at different addresses, so it checks only the rest of the test. The evidence is the stress test, the seqlock argument (Boehm, "Can Seqlocks Get Along with Programming Language Memory Models?", 2012), and two independent reviews. The stress test has one writer and two readers, with every payload word derived from the publication number. Removing the reader's sequence recheck makes it fail with 2,844 torn frames in about 266,000 reads. Removing a fence does not make it fail, because x86 already orders those accesses. Nothing here has run on a weakly ordered CPU such as ARM.
 
@@ -187,7 +191,8 @@ The ring's memory ordering has evidence of three kinds, and ThreadSanitizer is n
 | `src/capture.{hpp,cpp}` | files, cameras, and streams, with reconnects |
 | `src/preprocess.{hpp,cpp}` | letterbox geometry, CPU path, and the NPP path |
 | `src/engine.{hpp,cpp}`, `src/filter.cu` | TensorRT wrapper and the objectness filter |
-| `src/postprocess.{hpp,cpp}`, `src/render.{hpp,cpp}` | decode, NMS, and drawing |
+| `src/postprocess.{hpp,cpp}`, `src/render.{hpp,cpp}` | decode, NMS, and the headless drawing |
+| `src/gui.{hpp,cpp}`, `src/legend.{hpp,cpp}` | the ImGui window and the legend's timing and colour rules |
 | `src/bounded_queue.hpp`, `src/pool.hpp` | the queue and the frame pool |
 | `src/encoder.{hpp,cpp}` | libavcodec output |
 | `src/det_ring.{hpp,cpp}` | the shared-memory seqlock ring |

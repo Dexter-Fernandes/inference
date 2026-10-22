@@ -25,6 +25,18 @@ const char *to_string(StopReason r)
 }
 } // namespace
 
+std::array<std::string, 2> stage_rows(int frame_id, const StageMs &ms)
+{
+    return {cv::format("frame %d: read %.1f | pre %.1f", frame_id, ms.read, ms.pre),
+            cv::format("infer %.1f | post %.1f | render %.1f ms", ms.infer, ms.post, ms.render)};
+}
+
+std::string stage_line(int frame_id, const StageMs &ms)
+{
+    const auto rows = stage_rows(frame_id, ms);
+    return rows[0] + " | " + rows[1];
+}
+
 std::string json_escape(const std::string &s)
 {
     std::string out;

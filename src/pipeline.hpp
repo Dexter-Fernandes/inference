@@ -25,9 +25,10 @@ class Pipeline
 public:
     // Allocates pool_size frames, which bounds the frames in flight and so the latency. From run()
     // on, only the stage threads touch trt and cap. When publish is set, the post thread writes each
-    // frame's detections to it; it must outlive run().
+    // frame's detections to it; it must outlive run(). When annotate is false, the post thread leaves
+    // the image alone and the sink draws on it, as the GUI does.
     Pipeline(Trt &trt, Capture &cap, const Config &cfg, bool use_npp, std::vector<std::string> names, int pool_size = 2,
-             DetWriter *publish = nullptr);
+             DetWriter *publish = nullptr, bool annotate = true);
 
     // Call once. Calls sink for every frame in capture order. When sink returns false, capture
     // stops and frames still in flight are drained without reaching sink. Returns after every
@@ -55,6 +56,7 @@ private:
     const std::vector<std::string> names_;
     const int pool_size_;
     DetWriter *const publish_;
+    const bool annotate_;
 
     Pool<Frame> pool_; // outlives run()'s threads and queues, so every handle comes back
     std::stop_source abort_;

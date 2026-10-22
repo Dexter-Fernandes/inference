@@ -1,5 +1,8 @@
 #pragma once
 
+#include "common.hpp"
+
+#include <array>
 #include <iosfwd>
 #include <optional>
 #include <string>
@@ -43,6 +46,13 @@ struct RunReport
     std::optional<EncodeStats> encode;
     StopReason stopped_by = StopReason::Eof;
 };
+
+// The stage line over two rows, for the GUI's debug screen: "frame 3900: read 16.2 | pre 8.3" and
+// "infer 38.6 | post 0.3 | render 5.9 ms".
+std::array<std::string, 2> stage_rows(int frame_id, const StageMs &ms);
+
+// The two rows joined: "frame 3900: read 16.2 | pre 8.3 | infer 38.6 | post 0.3 | render 5.9 ms", the line stderr prints.
+std::string stage_line(int frame_id, const StageMs &ms);
 
 // Escapes backslash and double quote, which is all a path or URL needs.
 std::string json_escape(const std::string &s);

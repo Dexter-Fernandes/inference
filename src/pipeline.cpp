@@ -40,9 +40,9 @@ DetFrame to_det_frame(const Frame &fr)
 } // namespace
 
 Pipeline::Pipeline(Trt &trt, Capture &cap, const Config &cfg, bool use_npp, std::vector<std::string> names, int pool_size,
-                   DetWriter *publish)
+                   DetWriter *publish, bool annotate)
     : trt_(trt), cap_(cap), cfg_(cfg), use_npp_(use_npp), names_(std::move(names)), pool_size_(pool_size), publish_(publish),
-      pool_(make_frames(trt, pool_size))
+      annotate_(annotate), pool_(make_frames(trt, pool_size))
 {
 }
 
@@ -202,7 +202,9 @@ void Pipeline::run_post(Queue &in, Queue &out)
         }
         last = now;
 
-        fr.stage_ms.render = timed(render_tm, fr.id, "render", [&] { render(fr, names_, fps_ema); });
+        fr.fps = fps_ema;
+        if (annotate_)
+            fr.stage_ms.render = timed(render_tm, fr.id, "render", [&] { render(fr, names_); });
         if (!out.push(std::move(*f), abort))
             return;
     }

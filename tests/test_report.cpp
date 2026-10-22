@@ -11,6 +11,19 @@ TEST(JsonEscape, BackslashAndQuote)
     EXPECT_EQ(json_escape("plain"), "plain");
 }
 
+TEST(StageLine, MatchesTheLogFormat)
+{
+    EXPECT_EQ(stage_line(3900, {16.2, 8.3, 38.6, 0.3, 5.9}),
+              "frame 3900: read 16.2 | pre 8.3 | infer 38.6 | post 0.3 | render 5.9 ms");
+}
+
+TEST(StageRows, SplitTheLineAfterPre)
+{
+    const auto rows = stage_rows(3900, {16.2, 8.3, 38.6, 0.3, 5.9});
+    EXPECT_EQ(rows[0], "frame 3900: read 16.2 | pre 8.3");
+    EXPECT_EQ(rows[1], "infer 38.6 | post 0.3 | render 5.9 ms");
+}
+
 TEST(WriteJson, ExactOutput)
 {
     RunReport r;
