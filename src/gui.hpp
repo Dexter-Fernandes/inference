@@ -47,5 +47,5 @@ private:
     cv::TickMeter render_tm_;
     unsigned tex_ = 0;
     int tex_w_ = 0, tex_h_ = 0;
-    ImFont *sans_ = nullptr, *mono_ = nullptr, *lcd_ = nullptr;
+    ImFont *sans_ = nullptr, *mono_ = nullptr;
 };

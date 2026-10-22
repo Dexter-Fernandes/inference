@@ -59,7 +59,7 @@ target_link_libraries(imgui PUBLIC glfw OpenGL::GL)
 
 add_library(inference_core STATIC
     src/capture.cpp src/report.cpp src/preprocess.cpp src/engine.cpp src/postprocess.cpp src/render.cpp src/filter.cu
-    src/pipeline.cpp src/encoder.cpp src/det_ring.cpp src/legend.cpp)
+    src/pipeline.cpp src/encoder.cpp src/det_ring.cpp src/legend.cpp src/seven_segment.cpp)
 target_include_directories(inference_core PUBLIC src)
 target_link_libraries(inference_core PUBLIC ${OpenCV_LIBS} nvtx3-cpp nvinfer
     CUDA::cudart CUDA::nppc CUDA::nppidei CUDA::nppial)
@@ -82,7 +82,7 @@ enable_testing()
 include(GoogleTest)
 
 add_executable(unit_tests tests/test_letterbox.cpp tests/test_postprocess.cpp tests/test_capture.cpp tests/test_report.cpp
-    tests/test_bounded_queue.cpp tests/test_pool.cpp tests/test_encoder.cpp tests/test_det_ring.cpp tests/test_legend.cpp)
+    tests/test_bounded_queue.cpp tests/test_pool.cpp tests/test_encoder.cpp tests/test_det_ring.cpp tests/test_legend.cpp tests/test_seven_segment.cpp)
 target_link_libraries(unit_tests PRIVATE inference_core GTest::gtest_main)
 gtest_discover_tests(unit_tests DISCOVERY_MODE PRE_TEST)
 

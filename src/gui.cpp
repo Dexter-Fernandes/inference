@@ -1,5 +1,6 @@
 #include "gui.hpp"
 #include "render.hpp"
+#include "seven_segment.hpp"
 #include "timing.hpp"
 
 #include <GLFW/glfw3.h>
@@ -8,8 +9,6 @@
 #include <imgui_impl_opengl3.h>
 
 #include <algorithm>
-#include <cctype>
-#include <cfloat>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
@@ -21,7 +20,8 @@
 namespace
 {
 constexpr float kSidebarW = 320.0f;
-constexpr float kSansPx = 15.0f, kMonoPx = 11.0f, kLcdPx = 28.0f;
+constexpr float kSansPx = 15.0f, kMonoPx = 11.0f;
+constexpr float kLcdDigitH = 26.0f; // height of the LCD's seven-segment digits
 const char *kFontDir = "/usr/share/fonts/truetype/dejavu/";
 
 ImU32 grey(int v, int a = 255) { return IM_COL32(v, v, v, a); }
@@ -124,6 +124,39 @@ void roller_shutter(ImDrawList *dl, ImVec2 a, ImVec2 b, float travel)
     }
 }
 
+// A number in slanted seven-segment digits, right-aligned to x_right with its top at y. The segments a digit does not
+// light show dim, as on a real LCD. '.' is a dot at the bottom right of the digit before it.
+void lcd_number(ImDrawList *dl, float x_right, float y, float h, const std::string &text)
+{
+    const float w = digit_width(h), gap = 0.3f * h, dot = digit_thickness(h);
+    constexpr float kSlant = 0.12f;
+    const ImU32 lit = IM_COL32(130, 255, 130, 255), unlit = IM_COL32(120, 255, 120, 28);
+    const auto cells = std::count_if(text.begin(), text.end(), [](char c) { return c != '.'; });
+    float x = x_right - (cells * (w + gap) - gap);
+    const auto shape = [&](float cx, float cy) { return ImVec2{x + cx + (h - cy) * kSlant, y + cy}; };
+    const auto segments = segment_shapes(h);
+    for (size_t i = 0; i < text.size(); ++i)
+    {
+        if (text[i] == '.')
+            continue;
+        const unsigned mask = segment_mask(text[i]);
+        for (int k = 0; k < kSegmentCount; ++k)
+        {
+            ImVec2 pts[6];
+            for (int j = 0; j < 6; ++j)
+                pts[j] = shape(segments[k][j].x, segments[k][j].y);
+            dl->AddConvexPolyFilled(pts, 6, (mask >> k) & 1 ? lit : unlit);
+        }
+        if (i + 1 < text.size() && text[i + 1] == '.')
+        {
+            const float dx = w + gap * 0.3f, dy = h - dot;
+            const ImVec2 pts[4] = {shape(dx, dy), shape(dx + dot, dy), shape(dx + dot, dy + dot), shape(dx, dy + dot)};
+            dl->AddConvexPolyFilled(pts, 4, lit);
+        }
+        x += w + gap;
+    }
+}
+
 ImFont *load_font(ImGuiIO &io, const char *file, float px)
 {
     const std::string path = std::string(kFontDir) + file;
@@ -132,8 +165,6 @@ ImFont *load_font(ImGuiIO &io, const char *file, float px)
             return f;
     return io.Fonts->AddFontDefault();
 }
-
-ImVec2 text_size(ImFont *font, float px, const char *text) { return font->CalcTextSizeA(px, FLT_MAX, 0.0f, text); }
 
 // Distance from the top of a line to its baseline at the given size.
 float ascent(ImFont *font, float px) { return font->Ascent * px / font->FontSize; }
@@ -163,7 +194,6 @@ Gui::Gui(std::vector<std::string> names, double stream_fps) : names_(std::move(n
     io.IniFilename = nullptr;
     sans_ = load_font(io, "DejaVuSans.ttf", kSansPx);
     mono_ = load_font(io, "DejaVuSansMono.ttf", kMonoPx);
-    lcd_ = load_font(io, "DejaVuSansMono-Bold.ttf", kLcdPx);
     ImGui_ImplGlfw_InitForOpenGL(window_, true);
     ImGui_ImplOpenGL3_Init("#version 130");
 
@@ -261,19 +291,13 @@ void Gui::draw_sidebar(const Frame &f, float x0, float w, float h)
     const float lcd_h = 140;
     inset(dl, {x0 + pad, y}, {x0 + pad + inner, y + lcd_h}, IM_COL32(26, 44, 26, 255));
     const auto lcd_row = [&](float ry, const char *label, const std::string &value) {
-        // Text is placed by its top edge, so offset the label to put both baselines at ry + the value's ascent.
-        const float label_y = ry + ascent(lcd_, kLcdPx) - ascent(sans_, kSansPx);
-        dl->AddText(sans_, kSansPx, {x0 + pad + 12, label_y}, IM_COL32(110, 190, 110, 255), label);
-        // The unlit segments are the value's own shape with every digit an 8, so they sit exactly under it.
-        std::string ghost = value;
-        std::replace_if(ghost.begin(), ghost.end(), [](char c) { return std::isdigit(static_cast<unsigned char>(c)); }, '8');
-        const float tx = x0 + pad + inner - 12 - text_size(lcd_, kLcdPx, value.c_str()).x;
-        dl->AddText(lcd_, kLcdPx, {tx, ry}, IM_COL32(120, 255, 120, 28), ghost.c_str());
-        dl->AddText(lcd_, kLcdPx, {tx, ry}, IM_COL32(130, 255, 130, 255), value.c_str());
+        // The label's baseline sits on the digits' bottom edge.
+        dl->AddText(sans_, kSansPx, {x0 + pad + 12, ry + kLcdDigitH - ascent(sans_, kSansPx)}, IM_COL32(110, 190, 110, 255), label);
+        lcd_number(dl, x0 + pad + inner - 20, ry, kLcdDigitH, value);
     };
-    lcd_row(y + 8, "STREAM FPS", cv::format("%.1f", stream_fps_));
-    lcd_row(y + 52, "INFER FPS", cv::format("%.1f", f.fps));
-    lcd_row(y + 96, "DET", std::to_string(legend_.shown_count()));
+    lcd_row(y + 14, "STREAM FPS", cv::format("%.1f", stream_fps_));
+    lcd_row(y + 58, "INFER FPS", cv::format("%.1f", f.fps));
+    lcd_row(y + 102, "DET", std::to_string(legend_.shown_count()));
     y += lcd_h + 22;
 
     // Legend: one row per class the sidebar still lists. The plate stops `gap` above the debug unit and the rows
