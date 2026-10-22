@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+constexpr int kPersonClass = 0; // COCO, the one class whose boxes start switched on
+
 struct GLFWwindow;
 struct ImFont;
 
@@ -37,7 +39,7 @@ private:
 
     GLFWwindow *window_ = nullptr;
     const std::vector<std::string> names_;
-    Legend legend_;
+    Legend legend_{{kPersonClass}};
     std::array<std::string, 2> stage_rows_;
     float shutter_ = 0.0f;        // 0 closed, 1 open
     bool shutter_open_ = false;   // where it is heading

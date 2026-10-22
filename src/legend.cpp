@@ -39,7 +39,7 @@ void Legend::update(const std::vector<Detection> &dets, Clock::time_point now)
 
 std::optional<int> Legend::box_slot(int class_id) const
 {
-    if (hidden(class_id))
+    if (!shown(class_id))
         return std::nullopt;
     for (const auto &e : entries_)
         if (e.class_id == class_id)
@@ -47,10 +47,19 @@ std::optional<int> Legend::box_slot(int class_id) const
     return std::nullopt;
 }
 
-void Legend::set_hidden(int class_id, bool hide)
+int Legend::shown_count() const
 {
-    if (hide)
-        hidden_.insert(class_id);
+    int n = 0;
+    for (const auto &e : entries_)
+        if (shown(e.class_id))
+            n += e.count;
+    return n;
+}
+
+void Legend::set_shown(int class_id, bool on)
+{
+    if (on)
+        shown_.insert(class_id);
     else
-        hidden_.erase(class_id);
+        shown_.erase(class_id);
 }

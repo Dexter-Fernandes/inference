@@ -261,7 +261,7 @@ void Gui::draw_sidebar(const Frame &f, float x0, float w, float h)
         dl->AddText(lcd_, kLcdPx, {tx, ry}, IM_COL32(130, 255, 130, 255), value.c_str());
     };
     lcd_row(y + 8, "FPS", cv::format("%.1f", f.fps), "888.8");
-    lcd_row(y + 52, "DET", std::to_string(f.dets.size()), "888");
+    lcd_row(y + 52, "DET", std::to_string(legend_.shown_count()), "888");
     y += lcd_h + 22;
 
     // Legend: one row per class the sidebar still lists.
@@ -284,9 +284,9 @@ void Gui::draw_sidebar(const Frame &f, float x0, float w, float h)
         dl->AddText(sans_, kSansPx, {x0 + pad + 38, ry + 7}, on ? grey(225) : grey(105), name.c_str());
         const std::string count = on ? "x" + std::to_string(e.count) : "";
         dl->AddText(sans_, kSansPx, {x0 + pad + inner - 112, ry + 7}, grey(160), count.c_str());
-        const bool shown = !legend_.hidden(e.class_id);
+        const bool shown = legend_.shown(e.class_id);
         if (toggle_switch(("sw" + std::to_string(e.class_id)).c_str(), {x0 + pad + inner - 56, ry + 5}, shown))
-            legend_.set_hidden(e.class_id, shown); // does not touch entries_, so the reference stays valid
+            legend_.set_shown(e.class_id, !shown); // does not touch entries_, so the reference stays valid
     }
 
     // Debug: a fixed screen under a roll-up shutter, the drum box above it, pinned to the sidebar's bottom so a growing

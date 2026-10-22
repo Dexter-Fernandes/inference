@@ -86,20 +86,39 @@ TEST(Legend, ListedClassesNeverShareASlot)
     EXPECT_EQ(slots.size(), static_cast<size_t>(kPaletteSize));
 }
 
-TEST(Legend, HiddenClassHasNoBoxSlotAndStaysHiddenAfterLeaving)
+TEST(Legend, OnlyTheDefaultClassesStartShown)
+{
+    Legend l({0});
+    l.update({det(0), det(4)}, t0);
+    EXPECT_TRUE(l.box_slot(0).has_value());
+    EXPECT_FALSE(l.box_slot(4).has_value());
+}
+
+TEST(Legend, ShownStateOutlivesTheEntry)
 {
     Legend l;
     l.update({det(4)}, t0);
-    EXPECT_TRUE(l.box_slot(4).has_value());
-    l.set_hidden(4, true);
     EXPECT_FALSE(l.box_slot(4).has_value());
+    l.set_shown(4, true);
+    EXPECT_TRUE(l.box_slot(4).has_value());
     l.update({}, t0 + seconds(20));
     EXPECT_TRUE(l.entries().empty());
     l.update({det(4)}, t0 + seconds(21));
-    EXPECT_TRUE(l.hidden(4));
-    EXPECT_FALSE(l.box_slot(4).has_value());
-    l.set_hidden(4, false);
+    EXPECT_TRUE(l.shown(4));
     EXPECT_TRUE(l.box_slot(4).has_value());
+    l.set_shown(4, false);
+    EXPECT_FALSE(l.box_slot(4).has_value());
+}
+
+TEST(Legend, ShownCountSumsOnlyTheSwitchedOnClasses)
+{
+    Legend l({0});
+    l.update({det(0), det(0), det(0), det(2), det(2)}, t0);
+    EXPECT_EQ(l.shown_count(), 3);
+    l.set_shown(2, true);
+    EXPECT_EQ(l.shown_count(), 5);
+    l.update({det(0), det(0), det(0)}, t0 + seconds(1)); // class 2 is greyed, count 0
+    EXPECT_EQ(l.shown_count(), 3);
 }
 
 TEST(Legend, UnlistedClassHasNoBoxSlot)
