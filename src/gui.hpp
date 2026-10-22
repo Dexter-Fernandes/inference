@@ -21,7 +21,7 @@ struct ImFont;
 class Gui
 {
 public:
-    explicit Gui(std::vector<std::string> names); // throws when there is no display or GL context
+    Gui(std::vector<std::string> names, double stream_fps); // stream_fps: the source's nominal rate. Throws when there is no display or GL context
     ~Gui();
     Gui(const Gui &) = delete;
     Gui &operator=(const Gui &) = delete;
@@ -39,6 +39,7 @@ private:
 
     GLFWwindow *window_ = nullptr;
     const std::vector<std::string> names_;
+    const double stream_fps_;
     Legend legend_{{kPersonClass}};
     std::array<std::string, 2> stage_rows_;
     float shutter_ = 0.0f;        // 0 closed, 1 open

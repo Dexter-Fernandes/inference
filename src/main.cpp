@@ -125,7 +125,7 @@ int run(int argc, char **argv)
     // The window draws its own boxes in the sink, so the post thread annotates only for a headless run.
     std::optional<Gui> gui;
     if (!headless)
-        gui.emplace(names);
+        gui.emplace(names, cap.format().fps);
     Pipeline pipeline(trt, cap, config, use_npp, std::move(names), pool_size, publisher ? &*publisher : nullptr, headless);
     install_signal_handlers();
 
