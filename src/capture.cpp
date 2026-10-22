@@ -12,8 +12,10 @@ constexpr std::chrono::milliseconds kReconnectInterval{500};
 constexpr std::chrono::seconds kReconnectBudget{5};
 // FFmpeg's default is 30 s for both: a dead stream would stall the pipeline that long before a
 // reconnect starts, and each reopen attempt could block past the whole budget.
+// The read timeout must exceed the source's keyframe interval: a reader joins mid-interval and gets no frame
+// until the next keyframe (4.2 s on cam60). The cost is that a dead stream is noticed after this long.
 constexpr int kStreamOpenTimeoutMs = 2000;
-constexpr int kStreamReadTimeoutMs = 1000;
+constexpr int kStreamReadTimeoutMs = 5000;
 // Streams often report 0 or a 90 kHz tick rate.
 constexpr double kFallbackFps = 30.0;
 constexpr double kMaxFps = 240.0;
