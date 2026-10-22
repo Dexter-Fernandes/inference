@@ -133,6 +133,9 @@ ImFont *load_font(ImGuiIO &io, const char *file, float px)
 }
 
 ImVec2 text_size(ImFont *font, float px, const char *text) { return font->CalcTextSizeA(px, FLT_MAX, 0.0f, text); }
+
+// Distance from the top of a line to its baseline at the given size.
+float ascent(ImFont *font, float px) { return font->Ascent * px / font->FontSize; }
 } // namespace
 
 Gui::Gui(std::vector<std::string> names, double stream_fps) : names_(std::move(names)), stream_fps_(stream_fps)
@@ -257,7 +260,9 @@ void Gui::draw_sidebar(const Frame &f, float x0, float w, float h)
     const float lcd_h = 140;
     inset(dl, {x0 + pad, y}, {x0 + pad + inner, y + lcd_h}, IM_COL32(26, 44, 26, 255));
     const auto lcd_row = [&](float ry, const char *label, const std::string &value, const char *ghost) {
-        dl->AddText(sans_, kSansPx, {x0 + pad + 12, ry + 14}, IM_COL32(110, 190, 110, 255), label);
+        // Text is placed by its top edge, so offset the label to put both baselines at ry + the value's ascent.
+        const float label_y = ry + ascent(lcd_, kLcdPx) - ascent(sans_, kSansPx);
+        dl->AddText(sans_, kSansPx, {x0 + pad + 12, label_y}, IM_COL32(110, 190, 110, 255), label);
         const float vx = x0 + pad + inner - 12 - text_size(lcd_, kLcdPx, ghost).x;
         dl->AddText(lcd_, kLcdPx, {vx, ry}, IM_COL32(120, 255, 120, 28), ghost);
         const float tx = x0 + pad + inner - 12 - text_size(lcd_, kLcdPx, value.c_str()).x;
