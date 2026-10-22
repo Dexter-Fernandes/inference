@@ -8,6 +8,7 @@
 #include <imgui_impl_opengl3.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cfloat>
 #include <filesystem>
 #include <iostream>
@@ -259,18 +260,20 @@ void Gui::draw_sidebar(const Frame &f, float x0, float w, float h)
     // Readout: green LCD with unlit segments ghosted behind the digits.
     const float lcd_h = 140;
     inset(dl, {x0 + pad, y}, {x0 + pad + inner, y + lcd_h}, IM_COL32(26, 44, 26, 255));
-    const auto lcd_row = [&](float ry, const char *label, const std::string &value, const char *ghost) {
+    const auto lcd_row = [&](float ry, const char *label, const std::string &value) {
         // Text is placed by its top edge, so offset the label to put both baselines at ry + the value's ascent.
         const float label_y = ry + ascent(lcd_, kLcdPx) - ascent(sans_, kSansPx);
         dl->AddText(sans_, kSansPx, {x0 + pad + 12, label_y}, IM_COL32(110, 190, 110, 255), label);
-        const float vx = x0 + pad + inner - 12 - text_size(lcd_, kLcdPx, ghost).x;
-        dl->AddText(lcd_, kLcdPx, {vx, ry}, IM_COL32(120, 255, 120, 28), ghost);
+        // The unlit segments are the value's own shape with every digit an 8, so they sit exactly under it.
+        std::string ghost = value;
+        std::replace_if(ghost.begin(), ghost.end(), [](char c) { return std::isdigit(static_cast<unsigned char>(c)); }, '8');
         const float tx = x0 + pad + inner - 12 - text_size(lcd_, kLcdPx, value.c_str()).x;
+        dl->AddText(lcd_, kLcdPx, {tx, ry}, IM_COL32(120, 255, 120, 28), ghost.c_str());
         dl->AddText(lcd_, kLcdPx, {tx, ry}, IM_COL32(130, 255, 130, 255), value.c_str());
     };
-    lcd_row(y + 8, "STREAM FPS", cv::format("%.1f", stream_fps_), "888.8");
-    lcd_row(y + 52, "INFER FPS", cv::format("%.1f", f.fps), "888.8");
-    lcd_row(y + 96, "DET", std::to_string(legend_.shown_count()), "888");
+    lcd_row(y + 8, "STREAM FPS", cv::format("%.1f", stream_fps_));
+    lcd_row(y + 52, "INFER FPS", cv::format("%.1f", f.fps));
+    lcd_row(y + 96, "DET", std::to_string(legend_.shown_count()));
     y += lcd_h + 22;
 
     // Legend: one row per class the sidebar still lists. The plate stops `gap` above the debug unit and the rows
